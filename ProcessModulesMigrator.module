@@ -571,7 +571,6 @@ class ProcessModulesMigrator extends Process implements Module {
         }
 
         $this->modules->resetCache();
-        $this->modules->resetCache();
 
 
         //remove the extracted folder of all the migrated module files and the json file
