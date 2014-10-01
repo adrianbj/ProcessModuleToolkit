@@ -9,6 +9,8 @@ Allows automated migration and installation of modules from one PW to another.
 * You can optionally import the module config settings for each module from the source install.
 * It copies the module files, as well as the config settings, so you can use it to migrate modules that are not available in the PW modules directory, or on Github.
 * Full restore feature in case something goes wrong / you change your mind.
+* Optionally import the module config settings for each module from the source install.
+* Optionally update all of the imported modules (if they are in the ProcessWire modules directory) to their latest available versions.
 
 ##Usage
 Go to the Setup Page > Modules Migrator and follow the prompts.

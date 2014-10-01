@@ -28,7 +28,7 @@ class ProcessModulesMigrator extends Process implements Module {
     public static function getModuleInfo() {
         return array(
             'title' => 'Modules Migrator',
-            'version' => 1,
+            'version' => 2,
             'summary' => 'Automatically migrate modules and their settings from one PW installation to another.',
             'singular' => true,
             'autoload' => false,
@@ -303,6 +303,14 @@ class ProcessModulesMigrator extends Process implements Module {
         $form->add($f);
 
         $f = $this->modules->get("InputfieldCheckbox");
+        $f->name = 'live_update';
+        $f->label = 'Live Update Modules';
+        $f->description = "Automatically update all of the imported modules (if they are in the ProcessWire modules directory) to their latest available versions.";
+        if($this->session->live_update) $f->attr('value', $this->session->live_update);
+        $f->attr('checked', $this->session->live_update == '1' ? 'checked' : '' );
+        $form->add($f);
+
+        $f = $this->modules->get("InputfieldCheckbox");
         $f->name = 'choose_modules';
         $f->label = 'Choose Modules to Install';
         $f->description = "If checked you will get another step where you can choose exactly which modules you want to import.";
@@ -397,6 +405,11 @@ class ProcessModulesMigrator extends Process implements Module {
         if($this->session->module_settings) $f->attr('value', $this->session->module_settings);
         $form->add($f);
 
+        $f = $this->modules->get("InputfieldHidden");
+        $f->name = 'live_update';
+        if($this->session->live_update) $f->attr('value', $this->session->live_update);
+        $form->add($f);
+
         $this->addSubmit($form, 'Install Modules');
 
         return $form;
@@ -416,6 +429,7 @@ class ProcessModulesMigrator extends Process implements Module {
         if($this->input->post){
             $this->session->import_modules = isset($this->input->post->import_modules) ? $this->input->post->import_modules : '';
             $this->session->module_settings = $form->get('module_settings')->value;
+            $this->session->live_update = $form->get('live_update')->value;
             $this->session->create_backup = $form->get('create_backup')->value;
             if(isset($form->get('jsonFilename')->value)) $this->session->jsonFilename = $form->get('jsonFilename')->value;
         }
@@ -549,12 +563,15 @@ class ProcessModulesMigrator extends Process implements Module {
                         $this->modules->getInstall($module_name);
                         if(!in_array($module_name, $this->migratedModuleClassNames)) $this->migratedModuleClassNames[] = $module_name;
                         if($this->session->module_settings == 1) $this->modules->saveModuleConfigData($module_name, $this->objectToArray($data));
+                        if($this->session->live_update == 1) $this->downloadConfirm($module_name, true);
                     }
+
                 }
             }
         }
 
-
+        $this->modules->resetCache();
+        $this->modules->resetCache();
 
 
         //remove the extracted folder of all the migrated module files and the json file
@@ -764,6 +781,63 @@ class ProcessModulesMigrator extends Process implements Module {
             $path->isFile() ? unlink($path->getPathname()) : rmdir($path->getPathname());
         }
         if($deleteParent) rmdir($dirPath);
+    }
+
+
+
+    public function downloadConfirm($name, $update = false) {
+
+        $name = $this->wire('sanitizer')->name($name);
+        $info = self::getModuleInfo();
+        /*$this->wire('processHeadline', $this->labels['download_install']);
+        $this->wire('breadcrumbs')->add(new Breadcrumb('./', $info['title']));
+        if($update) $this->wire('breadcrumbs')->add(new Breadcrumb("./?edit=$name", $name));*/
+
+        $redirectURL = $update ? "./edit?name=$name" : "./";
+        $className = $name;
+        $url = trim($this->wire('config')->moduleServiceURL, '/') . "/$className/?apikey=" . $this->wire('sanitizer')->name($this->wire('config')->moduleServiceKey);
+        //echo $url;
+        $http = new WireHttp();
+        $data = $http->get($url);
+        //print_r($data);exit;
+        if(empty($data)) {
+            $this->error($this->_('Error retrieving data from web service URL') . ' - ' . $http->getError());
+            return $this->session->redirect($redirectURL);
+        }
+        $data = json_decode($data, true);
+        if(empty($data)) {
+            $this->error($this->_('Error decoding JSON from web service'));
+            return $this->session->redirect($redirectURL);
+        }
+        if($data['status'] == 'success') {
+            //$this->error($this->_('Error reported by web service:') . ' ' . wire('sanitizer')->entities($data['error']));
+            //return $this->session->redirect($redirectURL);
+
+            $installed = $this->modules->isInstalled($className) ? $this->modules->getModuleInfoVerbose($className) : null;
+            $installedVersion = $this->modules->formatVersion($installed['version']);
+            if(version_compare($installedVersion, $data['module_version']) < 0) {
+
+                $destinationDir = $this->wire('config')->paths->siteModules . $className . '/';
+                require_once(wire('config')->paths->modules . 'Process/ProcessModule/ProcessModuleInstall.php');
+                $install = new ProcessModuleInstall();
+
+                $completedDir = $install->downloadModule($data['download_url'], $destinationDir);
+                if($completedDir) {
+                    return;
+                }
+
+            }
+
+        }
+
+        /*$installable = true;
+        foreach($data['categories'] as $category) {
+            if(!in_array($category['name'], $this->uninstallableCategories)) continue;
+            $this->error(sprintf($this->_('Sorry modules of type "%s" are not installable from the admin.'), $category['title']));
+            $installable = false;
+        }
+        if(!$installable) $this->session->redirect($redirectURL);*/
+
     }
 
 
