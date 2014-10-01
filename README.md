@@ -5,7 +5,10 @@ ProcessModulesMigrator
 
 Allows automated migration and installation of modules from one PW to another.
 
-It can optionally import the module config settings for each module from the source install.
+* During the import, you can choose which modules from the collection to import.
+* You can optionally import the module config settings for each module from the source install.
+* It copies the module files, as well as the config settings, so you can use it to migrate modules that are not available in the PW modules directory, or on Github.
+* Full restore feature in case something goes wrong / you change your mind.
 
 ##Usage
 Go to the Setup Page > Modules Migrator and follow the prompts.
