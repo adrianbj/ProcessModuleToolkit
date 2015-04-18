@@ -1,10 +1,10 @@
 <?php
 
 /**
- * ProcessWire Modules Migrator
+ * ProcessWire Module Toolkit
  * by Adrian Jones
  *
- * Allows automated migration of modules and the config settings.
+ * Automated batch migration, installation and updating of modules and their config settings.
  *
  * ProcessWire 2.x
  * Copyright (C) 2011 by Ryan Cramer
@@ -17,7 +17,7 @@
 
 ini_set('max_execution_time', 300); //300 seconds = 5 minutes
 
-class ProcessModulesMigrator extends Process implements Module {
+class ProcessModuleTookit extends Process implements Module {
 
     /**
      * getModuleInfo is a module required by all modules to tell ProcessWire about them
@@ -26,45 +26,65 @@ class ProcessModulesMigrator extends Process implements Module {
      *
      */
     public static function getModuleInfo() {
-        return array(
-            'title' => 'Modules Migrator',
-            'version' => 2,
-            'summary' => 'Automatically migrate modules and their settings from one PW installation to another.',
+        $settings = array(
+            'title' => 'Module Toolkit',
+            'version' => 3,
+            'summary' => 'Automated batch migration, installation and updating of modules and their config settings.',
             'singular' => true,
-            'autoload' => false,
-            'icon'     => 'exchange',
+            'icon' => 'exchange',
             'nav' => array(
-              array(
-                'url' => 'export/',
-                'label' => 'Export',
-                'icon' => 'arrow-right',
-              ),
-              array(
-                'url' => 'import/',
-                'label' => 'Import',
-                'icon' => 'arrow-left'
-              ),
-              array(
+                array(
+                    'url' => 'export/',
+                    'label' => 'Export',
+                    'icon' => 'arrow-right',
+                ),
+                array(
+                    'url' => 'install/',
+                    'label' => 'Install',
+                    'icon' => 'arrow-left'
+                )
+            ),
+            'autoload' => function() {
+                if(wire('page')->process == 'ProcessWireUpgrade') return true; //only autoload on the ProcessWireUpgrade page
+                    else return false;
+            }
+        );
+
+        $settings['nav'][] = array(
+            'url' => 'upgrade/',
+            'label' => 'Upgrade',
+            'icon' => 'refresh'
+        );
+
+
+        if(class_exists('WireDatabaseBackup')){ // not present in older version of PW - prior to Aug 19, 2014 (approx 2.4.13)
+            $settings['nav'][] = array(
                 'url' => 'restore/',
                 'label' => 'Restore',
                 'icon' => 'reply'
-              )
-            )
-        );
+            );
+        }
+
+        return $settings;
     }
 
     /**
      * Name used for the page created in the admin
      *
      */
-    const adminPageName = 'modules_migrator';
+    const adminPageName = 'module_toolkit';
 
     protected $data = array();
     protected $moduleFiles = array();
     protected $selectedModules = array();
-    protected $migratedModuleClassNames = array();
-    protected $importedModuleClassNames = array();
+    protected $installedModuleClassNames = array();
+    protected $installFailedModuleClassNames = array();
+    protected $upgradedModuleClassNames = array();
     protected $zipFilename = '';
+    protected $uninstallableCategories = array(
+        'language-pack',
+        'site-profile',
+    );
 
 
     /**
@@ -73,7 +93,17 @@ class ProcessModulesMigrator extends Process implements Module {
      */
     public function init() {
         parent::init();
+        $this->addHookAfter('Page::render', $this, 'renderHook');
     }
+
+
+    public function renderHook($event) {
+        $page = $event->object;
+        if($page->process != 'ProcessWireUpgrade') return; // shouldn't be necessary given autoload condition above
+
+        $event->return = str_replace('<table id', '<p><a href="../module_toolkit/upgrade/"><button type="button" class="ui-button ui-state-default"><span class="ui-button-text"><i class="fa fa-refresh"></i> Batch Upgrade Modules</span></button></p><table id', $event->return);
+    }
+
 
     /**
      * Executed when root url for module is accessed
@@ -81,9 +111,13 @@ class ProcessModulesMigrator extends Process implements Module {
      */
     public function ___execute() {
 
+        if(method_exists($this->modules, 'resetCache')) {
+            $this->modules->resetCache();
+        }
+
         $form = $this->buildForm1();
         if($this->input->post->submit) {
-            if($this->processForm1($form) || $this->processExportForm2($form) || $this->processImportForm2($form)) $this->session->redirect('./'.$this->session->type.'/');
+            if($this->processForm1($form) || $this->processExportForm2($form) || $this->processInstallForm2($form)) $this->session->redirect('./'.$this->session->type.'/');
         }
         return $form->render();
     }
@@ -105,15 +139,15 @@ class ProcessModulesMigrator extends Process implements Module {
 
 
     /**
-     * Executed when ./import/ url for module is accessed
+     * Executed when ./install/ url for module is accessed
      *
      */
-    public function ___executeImport() {
+    public function ___executeInstall() {
 
-        $form = $this->buildImportForm2();
+        $form = $this->buildInstallForm2();
 
         if($this->input->post->submit) {
-            return $this->processImportForm2($form);
+            return $this->processInstallForm2($form);
         } else {
             return $form->render();
         }
@@ -138,6 +172,23 @@ class ProcessModulesMigrator extends Process implements Module {
     }
 
 
+    /**
+     * Executed when ./upgrade/ url for module is accessed
+     *
+     */
+    public function ___executeUpgrade() {
+
+        $form = $this->buildUpgradeForm2();
+
+        if($this->input->post->submit) {
+            return $this->processUpgradeForm2($form);
+        } else {
+            return $form->render();
+        }
+
+    }
+
+
 
 
 /**
@@ -148,16 +199,17 @@ class ProcessModulesMigrator extends Process implements Module {
 
         $form = $this->modules->get("InputfieldForm");
         $form->method = 'post';
-        $form->description = "Step 1: Export, Import, or Restore";
+        $form->description = 'Step 1: Export, Install, Upgrade, Restore';
 
         $f = $this->modules->get("InputfieldSelect");
         $f->name = 'type';
-        $f->label = 'Export, Import, or Restore';
+        $f->label = 'Export, Install, Upgrade, Restore';
         $f->required = true;
         $f->addOption('');
         $f->addOption('export', 'Export');
-        $f->addOption('import', 'Import');
-        if(class_exists('WireDatabaseBackup')){ //not present in older version of PW - prior to Aug 19, 2014 (approx 2.4.13)
+        $f->addOption('install', 'Install');
+        $f->addOption('upgrade', 'Upgrade');
+        if(class_exists('WireDatabaseBackup')){ // not present in older version of PW - prior to Aug 19, 2014 (approx 2.4.13)
             $f->addOption('restore', 'Restore');
         }
         if($this->session->type) $f->attr('value', $this->session->type);
@@ -179,12 +231,12 @@ class ProcessModulesMigrator extends Process implements Module {
         $form->processInput($this->input->post);
         if(count($form->getErrors())) return false;
 
-        $this->recursiveDelete($this->page->filesManager()->path(), false); //cleanup anything left in the Migrator assets/files directory from previous failed import
+        $this->recursiveDelete($this->page->filesManager()->path(), false); //cleanup anything left in the Toolkit assets/files directory from previous failed install
 
         $type = $form->get('type')->value;
 
         if(!$type) {
-            $this->error("Missing required Export/Import/Restore action type");
+            $this->error("Missing required Export/Install/Restore action type");
             return false;
         }
 
@@ -205,21 +257,42 @@ class ProcessModulesMigrator extends Process implements Module {
         $form->method = 'post';
         $form->description = "Step 2: Choose Modules to Export";
 
-        $f = $this->modules->get("InputfieldAsmSelect");
+        $f = $this->modules->get("InputfieldCheckboxes");
         $f->name = 'selectedModules';
         $f->label = 'Selected Modules';
         $f->required = true;
-        $f->description = "The modules you want to export.";
-        $f->setAsmSelectOption('sortable', false);
+        $f->description = "Select the modules you want to export.";
         foreach($this->modules as $module){
             //$moduleInfo = wire('modules')->getModuleInfoVerbose($module->className());
             // don't show core modules
             //if($moduleInfo['core']) continue; //exclude core modules - this wasn't working. It seems that some modules don't have a "name", hence the use of className below.
             $filename = $this->config->urls->{$module->className()};
-            if(preg_match('%^\/wire\/%Uis', $filename) || !$this->modules->isInstalled($module)) continue;
-            $f->addOption($module->className(), $module->className());
-            $f->attr('value', $module->className());
+            if(preg_match('%^\/wire\/%Uis', $filename) || !wire('modules')->isInstalled($module)) continue;
+
+            $moduleName = $module->className();
+
+            $dependents = $this->modules->getRequiredBy($moduleName, true);
+            $requirements = $this->modules->getRequires($moduleName, false, true);
+            $dependentsStr = '';
+            $requirementsStr = '';
+            foreach($dependents as $name) $dependentsStr .= ($dependentsStr ? ', ' : '') . $name;
+            foreach($requirements as $name) {
+                if(preg_match('/^([^<>!=]+)([<>!=]+.*)$/', $name, $matches)) {
+                    $name = $matches[1];
+                    $extra = $matches[2];
+                } else $extra = '';
+                if($name == 'PHP' || $name == 'ProcessWire') {
+                    //$requirementsStr .= ($requirementsStr ? ', ' : '') . "$name$extra";
+                } else {
+                    $requirementsStr .= ($requirementsStr ? ', ' : '') . "$name$extra";
+                }
+            }
+
+
+            $f->addOption($moduleName, $moduleName . ($dependentsStr ? ' (Required by: ' . $dependentsStr .') *' : '') . ($requirementsStr ? ' (Requires: ' . $requirementsStr .') *' : ''));
+            $f->attr('value', $moduleName);
         }
+        $f->notes = "* Be careful not to unselect a module that is required by another selected module.";
         $form->add($f);
 
         $this->addSubmit($form, 'Export');
@@ -266,60 +339,72 @@ class ProcessModulesMigrator extends Process implements Module {
     }
 
     /**
-     * Build the "Import Step 2" form to import the json file
+     * Build the "Install Step 2" form to install the json file
      *
      */
-    protected function buildImportForm2() {
+    protected function buildInstallForm2() {
 
         $form = $this->modules->get("InputfieldForm");
         $form->method = 'post';
-        $form->description = "Step 2: Import";
+        $form->description = "Step 2: Install";
 
         if(class_exists('WireDatabaseBackup')){ //not present in older version of PW - prior to Aug 19, 2014 (approx 2.4.13)
             $f = $this->modules->get("InputfieldCheckbox");
             $f->name = 'create_backup';
             $f->label = 'Backup existing database and modules directory';
-            $f->description = "Determines whether to backup the existing database and modules directory before importing the new content. Highly Recommended!";
+            $f->description = "Determines whether to backup the existing database and modules directory before installing the new content. Highly Recommended!";
             if($this->session->create_backup) $f->attr('value', $this->session->create_backup);
             $f->attr('checked', $this->session->create_backup == '1' ? 'checked' : '' );
             $form->add($f);
         }
+
+        $f = $this->modules->get("InputfieldTextarea");
+        $f->name = 'modules_list';
+        $f->label = 'Text List of Modules to Install';
+        $f->description = "Enter one module class name per line.";
+        $f->notes = "Use this or the zip file upload option, not both.";
+        if($this->session->modules_list) $f->attr('value', $this->session->modules_list);
+        $f->collapsed = Inputfield::collapsedBlank;
+        $form->add($f);
 
         $f = $this->modules->get("InputfieldFile");
         $f->name = 'zip_file';
         $f->label = 'Zip File Upload';
         $f->extensions = 'zip';
         $f->maxFiles = 1;
-        $f->descriptionRows = 0;
+        $f->description = "Select a zip file exported from a different Processwire installation.";
+        $f->notes = "Use this or the list of modules option, not both.";
         $f->overwrite = true;
+        $f->collapsed = Inputfield::collapsedBlank;
         $form->add($f);
 
         $f = $this->modules->get("InputfieldCheckbox");
         $f->name = 'module_settings';
-        $f->label = 'Import Module Settings';
-        $f->description = "Determines whether to import the module settings from the source PW install.";
+        $f->label = 'Install Module Settings';
+        $f->showIf = "zip_file!=''";
+        $f->description = "Determines whether to install the module settings from the source PW install.";
         if($this->session->module_settings) $f->attr('value', $this->session->module_settings);
         $f->attr('checked', $this->session->module_settings == '1' ? 'checked' : '' );
         $form->add($f);
 
         $f = $this->modules->get("InputfieldCheckbox");
-        $f->name = 'live_update';
-        $f->label = 'Live Update Modules';
-        $f->description = "Automatically update all of the imported modules (if they are in the ProcessWire modules directory) to their latest available versions.";
-        if($this->session->live_update) $f->attr('value', $this->session->live_update);
-        $f->attr('checked', $this->session->live_update == '1' ? 'checked' : '' );
+        $f->name = 'live_upgrade';
+        $f->label = 'Live Upgrade Modules';
+        $f->showIf = "zip_file!=''";
+        $f->description = "Automatically upgrade all of the installed modules (if they are in the ProcessWire modules directory) to their latest available versions.";
+        if($this->session->live_upgrade) $f->attr('value', $this->session->live_upgrade);
+        $f->attr('checked', $this->session->live_upgrade == '1' ? 'checked' : '' );
         $form->add($f);
 
         $f = $this->modules->get("InputfieldCheckbox");
         $f->name = 'choose_modules';
         $f->label = 'Choose Modules to Install';
-        $f->description = "If checked you will get another step where you can choose exactly which modules you want to import.";
+        $f->showIf = "zip_file!=''";
+        $f->description = "If checked you will get another step where you can choose exactly which modules you want to install.";
         $f->attr('checked', $this->session->choose_modules == '1' ? 'checked' : '' );
-        $f->collapsed = $f->attr('checked') ? Inputfield::collapsedNo : Inputfield::collapsedYes;
         $form->add($f);
 
-
-        $this->addSubmit($form, 'Upload and Install Modules');
+        $this->addSubmit($form, 'Install Modules');
 
         return $form;
     }
@@ -340,7 +425,7 @@ class ProcessModulesMigrator extends Process implements Module {
         $f->name = 'restore_directory';
         $f->label = 'Backup to Restore';
         $f->required = true;
-        foreach($iterator = new RecursiveDirectoryIterator($this->config->paths->assets.'modulesmigratorbackups/', RecursiveDirectoryIterator::SKIP_DOTS) as $item){
+        foreach($iterator = new RecursiveDirectoryIterator($this->config->paths->assets.'moduletoolkitbackups/', RecursiveDirectoryIterator::SKIP_DOTS) as $item){
             if ($item->isDir()) {
 
                 if(strpos($iterator->getSubPathName(),'_') !== false){
@@ -367,19 +452,19 @@ class ProcessModulesMigrator extends Process implements Module {
 
 
     /**
-     * Build the "Import Step 3" form to determine what pages/fields get imported
+     * Build the "Install Step 3" form to determine what pages/fields get installed
      *
      */
-    protected function buildImportForm3($data) {
+    protected function buildInstallForm3($data) {
 
         $form = $this->modules->get("InputfieldForm");
         $form->method = 'post';
-        $form->description = "Step 3: Edit Modules to be Imported";
+        $form->description = "Step 3: Edit Modules to be Installed";
 
 
-        $f = $this->modules->get("InputfieldAsmSelect");
-        $f->name = 'import_modules';
-        $f->label = 'Import Modules';
+        $f = $this->modules->get("InputfieldCheckboxes");
+        $f->name = 'install_modules';
+        $f->label = 'Install Modules';
         $f->required = true;
 
         foreach($data->modules as $module){
@@ -389,8 +474,8 @@ class ProcessModulesMigrator extends Process implements Module {
             }
         }
 
-        $f->description = "By default, all modules in the import are selected. Remove any modules that you don't want to import.";
-        $f->setAsmSelectOption('sortable', false);
+        $f->description = "By default, all modules in the install are checked. Uncheck any modules that you don't want to install.";
+        //$f->setAsmSelectOption('sortable', false);
         $form->add($f);
 
 
@@ -406,8 +491,8 @@ class ProcessModulesMigrator extends Process implements Module {
         $form->add($f);
 
         $f = $this->modules->get("InputfieldHidden");
-        $f->name = 'live_update';
-        if($this->session->live_update) $f->attr('value', $this->session->live_update);
+        $f->name = 'live_upgrade';
+        if($this->session->live_upgrade) $f->attr('value', $this->session->live_upgrade);
         $form->add($f);
 
         $this->addSubmit($form, 'Install Modules');
@@ -417,43 +502,68 @@ class ProcessModulesMigrator extends Process implements Module {
 
 
     /**
-     * Process the "Import Step 2" form and upload the zip/json file
+     * Process the "Install Step 2" form and upload the zip/json file
      *
      */
-    protected function processImportForm2(InputfieldForm $form) {
+    protected function processInstallForm2(InputfieldForm $form) {
 
         $form->processInput($this->input->post);
         //$errors = $form->getErrors(true); used to delete automatic field errors since we want to provide custom ones
         if(count($form->getErrors())) return false;
 
         if($this->input->post){
-            $this->session->import_modules = isset($this->input->post->import_modules) ? $this->input->post->import_modules : '';
+            $this->session->install_modules = isset($this->input->post->install_modules) ? $this->input->post->install_modules : '';
             $this->session->module_settings = $form->get('module_settings')->value;
-            $this->session->live_update = $form->get('live_update')->value;
+            $this->session->live_upgrade = $form->get('live_upgrade')->value;
             $this->session->create_backup = $form->get('create_backup')->value;
             if(isset($form->get('jsonFilename')->value)) $this->session->jsonFilename = $form->get('jsonFilename')->value;
         }
 
         if($this->session->create_backup == 1){
 
-            $backupDir = $this->config->paths->assets.'modulesmigratorbackups/'.date('Y-m-d_H-i-s');
+            $backupDir = $this->config->paths->assets.'moduletoolkitbackups/'.date('Y-m-d_H-i-s');
 
-            if (!file_exists($this->config->paths->assets.'modulesmigratorbackups/')) mkdir($this->config->paths->assets.'modulesmigratorbackups/');
+            if (!file_exists($this->config->paths->assets.'moduletoolkitbackups/')) mkdir($this->config->paths->assets.'moduletoolkitbackups/');
             if (!file_exists($backupDir)) mkdir($backupDir);
 
             $backup = new WireDatabaseBackup($backupDir.'/');
             $backup->setDatabase($this->database);
             $backup->setDatabaseConfig($this->config);
 
-            $file = $backup->backup(array('filename' => 'modulesmigratorbackup.sql'));
+            $file = $backup->backup(array('filename' => 'moduletoolkitbackup.sql'));
 
             wireCopy($this->config->paths->siteModules, $backupDir . '/', true);
 
         }
 
 
-        //for submission of form either without Edit Imported Content, or the first submission to get the modules from the JSON file
-        if(!isset($form->get('import_modules')->value) || $form->get('import_modules')->value==''){
+        if($this->input->post->modules_list != ''){
+            $modulesList = $this->input->post->modules_list;
+            $this->session->modulesList = $modulesList;
+
+            foreach(explode("\n", $this->input->post->modules_list) as $module_name) {
+                if(!wire('modules')->isInstalled($module_name)){
+                    $info = $this->modules->getModuleInfoVerbose($module_name);
+                    if(count($info['requires'])==0) {
+                        //$requires = $this->modules->getRequiresForInstall($module_name); don't know why this and also isInstallable($module_name, true) wasn't working
+                        //if(count($requires)) continue;
+                        $this->modules->getInstall($module_name);
+                        $this->downloadConfirm($module_name, true);
+                    }
+                    else {
+                        $this->installFailedModuleClassNames[] = $module_name;
+                    }
+                }
+            }
+
+            if(method_exists($this->modules, 'resetCache')) $this->modules->resetCache();
+
+            return $this->processInstallForm2Markup();
+        }
+
+
+        //for submission of form either without Edit Installed Content, or the first submission to get the modules from the JSON file
+        if(!isset($form->get('install_modules')->value) || $form->get('install_modules')->value==''){
             if($form->get('zip_file')->value != ''){
                 $zipFile = $form->get('zip_file')->value;
                 $this->session->zipFile = $zipFile->first();
@@ -461,25 +571,25 @@ class ProcessModulesMigrator extends Process implements Module {
                 $this->session->zipFilename = $this->session->zipFile->filename;
             }
 
-            $this->session->migratorFilesDir = $this->page->filesManager()->path() . 'migratorfiles';
-            $this->session->jsonFilename = $this->session->migratorFilesDir . '/data.json';
+            $this->session->toolkitFilesDir = $this->page->filesManager()->path() . 'toolkitfiles';
+            $this->session->jsonFilename = $this->session->toolkitFilesDir . '/data.json';
 
             if($this->session->zipFilename!=''){
                 // extract uploaded zip to destination PW installation
                 $zip = new ZipArchive;
                 if($zip->open($this->session->zipFilename) === TRUE) {
-                    if (!file_exists($this->session->migratorFilesDir)) mkdir($this->session->migratorFilesDir);
-                    $zip->extractTo($this->session->migratorFilesDir);
+                    if (!file_exists($this->session->toolkitFilesDir)) mkdir($this->session->toolkitFilesDir);
+                    $zip->extractTo($this->session->toolkitFilesDir);
                     $zip->close();
                     unlink($this->session->zipFilename);
 
                     // set paths for moving files into the destination PW site's modules folder
-                    $srcDir = $this->session->migratorFilesDir;
+                    $srcDir = $this->session->toolkitFilesDir;
                     $destDir = $this->config->paths->siteModules.'/';
 
                     // check write permissions on modules directory and fail with friendly error
                     if(file_exists($srcDir) && !is_writable($destDir)){
-                        if($this->session->migratorFilesDir && file_exists($this->session->migratorFilesDir)) $this->recursiveDelete($this->session->migratorFilesDir);
+                        if($this->session->toolkitFilesDir && file_exists($this->session->toolkitFilesDir)) $this->recursiveDelete($this->session->toolkitFilesDir);
                         $this->error("The modules directory is not writeable. Please change permissions and try again.");
                         $form->get('zip_file')->value = '';
                         return $form->render();
@@ -490,33 +600,38 @@ class ProcessModulesMigrator extends Process implements Module {
                         $i=0;
                         foreach($iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($srcDir, RecursiveDirectoryIterator::SKIP_DOTS), RecursiveIteratorIterator::SELF_FIRST) as $item){
                             if(pathinfo($item, PATHINFO_BASENAME) == 'data.json') continue;
-                            $modulePath = str_replace($this->session->migratorFilesDir . '/', '', $item);
+                            $modulePath = str_replace($this->session->toolkitFilesDir . '/', '', $item);
                             $moduleName = strpos($modulePath,'/') !== false ? strstr($modulePath, '/', true) : $modulePath;
-                            if($this->modules->isInstalled($moduleName)) continue; //if already installed then skip
-                            if(is_array($this->session->import_modules) && !in_array($moduleName, $this->session->import_modules)) continue; //if not in the list of selected modules to be imported then skip
+                            if(wire('modules')->isInstalled($moduleName)) continue; //if already installed then skip
+                            if(is_array($this->session->install_modules) && !in_array($moduleName, $this->session->install_modules)) continue; //if not in the list of selected modules to be installed then skip
                             if ($item->isDir()) {
                                 if(!file_exists($destDir . $iterator->getSubPathName())){
                                     mkdir($destDir . str_replace("//", "/", $iterator->getSubPathName()));
                                 }
                             }
                             else {
-                                copy($item, $destDir . str_replace("//", "/", $iterator->getSubPathName()));
+                                if(is_writable($destDir)) {
+                                    copy($item, $destDir . str_replace("//", "/", $iterator->getSubPathName()));
+                                }
+                                else {
+                                    $this->error("Some modules could not be copied due to insufficient file permissions. Make sure your modules directory and all folders/file inside are writeable.");
+                                }
                             }
                             $i++;
                         }
                     }
                 }
             }
-            elseif(file_exists($this->session->migratorFilesDir)){
+            elseif(file_exists($this->session->toolkitFilesDir)){
                 //no need to do anything since the directory of files already exists
                 //this would be the case when "Choose Modules to Install" was selected.
             }
             else{
                 $this->error("Missing required ZIP or JSON Source");
-                if($this->session->migratorFilesDir && file_exists($this->session->migratorFilesDir)) $this->recursiveDelete($this->session->migratorFilesDir);
+                if($this->session->toolkitFilesDir && file_exists($this->session->toolkitFilesDir)) $this->recursiveDelete($this->session->toolkitFilesDir);
                 return $form->render();
 
-                if (!file_exists($this->session->migratorFilesDir)) mkdir($this->session->migratorFilesDir);
+                if (!file_exists($this->session->toolkitFilesDir)) mkdir($this->session->toolkitFilesDir);
                 file_put_contents($this->session->jsonFilename, $json);
                 //exit;
 
@@ -530,7 +645,7 @@ class ProcessModulesMigrator extends Process implements Module {
             if(empty($fp)){
 
                 $this->error("Missing required ZIP or JSON Source");
-                if($this->session->migratorFilesDir && file_exists($this->session->migratorFilesDir)) $this->recursiveDelete($this->session->migratorFilesDir);
+                if($this->session->toolkitFilesDir && file_exists($this->session->toolkitFilesDir)) $this->recursiveDelete($this->session->toolkitFilesDir);
                 //$this->session->redirect('./'.$this->session->type);
                 return $form->render();
             }
@@ -541,43 +656,71 @@ class ProcessModulesMigrator extends Process implements Module {
         }
 
 
-
         //if selected, redirect to form to allow user to determine which modules get installed
         if($this->input->post->choose_modules=='1'){
-            $form = $this->buildImportForm3($data);
+            $form = $this->buildInstallForm3($data);
             return $form->render();
         }
 
-
-        //print_r($this->session->import_modules);exit;
-
         foreach($data->modules as $modules){
             foreach($modules as $module_name => $data){
-                if(is_array($this->session->import_modules) && !in_array($module_name, $this->session->import_modules)) continue; //if not in the list of selected modules to be imported then skip
+                if(is_array($this->session->install_modules) && !in_array($module_name, $this->session->install_modules)) continue; //if not in the list of selected modules to be installed then skip
                 //$this->modules->get($module_name);
-                if(!$this->modules->isInstalled($module_name)){
+                if(!wire('modules')->isInstalled($module_name)){
                     $info = $this->modules->getModuleInfoVerbose($module_name);
                     if(count($info['requires'])==0) {
                         //$requires = $this->modules->getRequiresForInstall($module_name); don't know why this and also isInstallable($module_name, true) wasn't working
                         //if(count($requires)) continue;
                         $this->modules->getInstall($module_name);
-                        if(!in_array($module_name, $this->migratedModuleClassNames)) $this->migratedModuleClassNames[] = $module_name;
                         if($this->session->module_settings == 1) $this->modules->saveModuleConfigData($module_name, $this->objectToArray($data));
-                        if($this->session->live_update == 1) $this->downloadConfirm($module_name, true);
+                        if($this->session->live_upgrade == 1) $this->downloadConfirm($module_name, true);
                     }
-
+                    $this->installedModuleClassNames[] = $module_name;
                 }
             }
         }
 
-        $this->modules->resetCache();
+        if(method_exists($this->modules, 'resetCache')) {
+            $this->modules->resetCache();
+        }
 
 
         //remove the extracted folder of all the migrated module files and the json file
-        if($this->session->migratorFilesDir && file_exists($this->session->migratorFilesDir)) $this->recursiveDelete($this->session->migratorFilesDir);
+        if($this->session->toolkitFilesDir && file_exists($this->session->toolkitFilesDir)) $this->recursiveDelete($this->session->toolkitFilesDir);
 
-        return $this->processImportForm2Markup();
+        return $this->processInstallForm2Markup();
     }
+
+
+
+    /**
+     * Process the "Upgrade Step 2" form and upgrade all selected modules
+     *
+     */
+    protected function processUpgradeForm2(InputfieldForm $form) {
+
+        $form->processInput($this->input->post);
+
+        if(count($form->getErrors())) return false;
+
+        if($this->input->post){
+            $this->session->upgrade_modules = isset($this->input->post->upgrade_modules) ? $this->input->post->upgrade_modules : '';
+        }
+
+        foreach($this->modules as $module){
+            if(is_array($this->session->upgrade_modules) && !in_array($module->className(), $this->session->upgrade_modules)) continue; //if not in the list of selected modules to be installed then skip
+            $this->downloadConfirm($module->className(), true);
+            $this->upgradedModuleClassNames[] = $module->className();
+        }
+
+        if(method_exists($this->modules, 'resetCache')) {
+            $this->modules->resetCache();
+        }
+
+        return $this->processUpgradeForm2Markup();
+
+    }
+
 
 
     public function objectToArray($d) {
@@ -603,25 +746,81 @@ class ProcessModulesMigrator extends Process implements Module {
      */
     protected function processRestoreForm2(InputfieldForm $form) {
 
-        $backup = new WireDatabaseBackup($this->config->paths->assets.'modulesmigratorbackups/' . $this->input->post->restore_directory . '/');
+        $backup = new WireDatabaseBackup($this->config->paths->assets.'moduletoolkitbackups/' . $this->input->post->restore_directory . '/');
         $backup->setDatabase($this->database);
         $backup->setDatabaseConfig($this->config);
 
-        $success = $backup->restore($this->config->paths->assets.'modulesmigratorbackups/' . $this->input->post->restore_directory . '/modulesmigratorbackup.sql');
+        $success = $backup->restore($this->config->paths->assets.'moduletoolkitbackups/' . $this->input->post->restore_directory . '/moduletoolkitbackup.sql');
         if($success) $this->message("Database successfully restored.");
         else $this->error("Sorry, there was a problem and the database could not be restored.");
 
         $this->recursiveDelete($this->config->paths->siteModules, false); //clean up modules folder so it will only contain those files from the backup
 
-        if(wireCopy($this->config->paths->assets.'modulesmigratorbackups/' . $this->input->post->restore_directory . '/', $this->config->paths->siteModules, true)){
+        if(wireCopy($this->config->paths->assets.'moduletoolkitbackups/' . $this->input->post->restore_directory . '/', $this->config->paths->siteModules, true)){
             $this->message("Modules directory successfully restored.");
         }
         else{
             $this->error("Sorry, there was a problem and the modules directory could not be restored.");
         }
 
-        unlink($this->config->paths->siteModules . 'modulesmigratorbackup.sql');
+        unlink($this->config->paths->siteModules . 'moduletoolkitbackup.sql');
 
+    }
+
+
+
+    /**
+     * Build the "Install Step 2" form to install the json file
+     *
+     */
+    protected function buildUpgradeForm2() {
+
+        $form = $this->modules->get("InputfieldForm");
+        $form->method = 'post';
+        $form->description = "Step 2: Upgrade";
+
+        /*if(class_exists('WireDatabaseBackup')){ //not present in older version of PW - prior to Aug 19, 2014 (approx 2.4.13)
+            $f = $this->modules->get("InputfieldCheckbox");
+            $f->name = 'create_backup';
+            $f->label = 'Backup existing database and modules directory';
+            $f->description = "Determines whether to backup the existing database and modules directory before installing the new content. Highly Recommended!";
+            if($this->session->create_backup) $f->attr('value', $this->session->create_backup);
+            $f->attr('checked', $this->session->create_backup == '1' ? 'checked' : '' );
+            $form->add($f);
+        }*/
+
+        $f = $this->modules->get("InputfieldCheckboxes");
+        $f->name = 'upgrade_modules';
+        $f->label = 'Upgrade Modules';
+
+
+        $items = $this->getVersions();
+        if(count($items)) {
+            $i=0;
+            foreach($items as $name => $item) {
+                if(empty($item['remote'])) continue; // not in directory
+                if($name == 'ProcessWire dev' || $name == 'ProcessWire master') continue;
+                if($item['new'] <= 0) continue;
+                $f->addOption($name, $item['title'] . ' ('.$name.') - Installed: ' . $item['local'] . ', Remote: ' . $item['remote']);
+                $f->attr('value', $name);
+                $i++;
+            }
+        }
+
+        if($i>0) {
+            $f->description = "All modules in this list have available upgrades. Uncheck any modules that you don't want to upgrade.";
+            $f->notes = "All the selected modules will be upgraded in one step. Please be sure this is what you want to do before clicking the Upgrade button below.";
+        }
+        else {
+            $f->description = "There are no modules that have upgrades available.";
+        }
+
+        $form->add($f);
+
+
+        $this->addSubmit($form, 'Upgrade Selected Modules');
+
+        return $form;
     }
 
 
@@ -696,24 +895,50 @@ class ProcessModulesMigrator extends Process implements Module {
 
 
     /**
-     * Provide the completion output markup for processImportForm2
+     * Provide the completion output markup for processInstallForm2
      *
      */
-    protected function processImportForm2Markup() {
+    protected function processInstallForm2Markup() {
         $out = '';
-        if(count($this->migratedModuleClassNames)>0){
-            $out .= "<p><strong>The following modules were imported and installed.</strong></p><p>";
-            foreach($this->migratedModuleClassNames as $moduleClassName)
-                if(strpos($moduleClassName,'/') === false && !in_array($moduleClassName, $this->importedModuleClassNames)){
-                    $this->importedModuleClassNames[] = $moduleClassName;
-                    $out .= str_replace('.module', '', $moduleClassName).'<br />';
-                }
+        if(count($this->installedModuleClassNames)>0){
+            $out .= "<p><strong>The following modules were successfully installed:</strong></p><p>";
+            foreach(array_unique($this->installedModuleClassNames) as $moduleClassName) {
+                $out .= '<a href="'.$this->config->urls->admin.'module/edit?name='.$moduleClassName.'">' . $moduleClassName .'</a><br />';
+            }
+        }
+        else {
+            $out .= "<p><strong>No modules were installed.</strong></p>";
         }
 
-        $out .= "<p><a href='../import/'>Import more modules</a></p>";
+        if(count($this->installFailedModuleClassNames)>0){
+            $out .= "<p><strong>The following modules failed to install:</strong></p>";
+            foreach(array_unique($this->installFailedModuleClassNames) as $moduleClassName) {
+                $out .= $moduleClassName .'<br />';
+            }
+        }
+
+        $out .= "<p><strong><a href='../install/'>Install more modules</a></strong></p>";
 
         return $out;
     }
+
+
+    /**
+     * Provide the completion output markup for processUpgradeForm2
+     *
+     */
+    protected function processUpgradeForm2Markup() {
+        $out = '';
+        if(count($this->upgradedModuleClassNames)>0){
+            $out .= "<p><strong>The following modules were successfullly upgraded:</strong></p><p>";
+            foreach(array_unique($this->upgradedModuleClassNames) as $moduleClassName) {
+                $out .= '<a href="'.$this->config->urls->admin.'module/edit?name='.$moduleClassName.'">' . $moduleClassName .'</a><br />';
+            }
+        }
+
+        return $out;
+    }
+
 
 
 
@@ -777,28 +1002,30 @@ class ProcessModulesMigrator extends Process implements Module {
      */
     public function recursiveDelete($dirPath, $deleteParent = true){
         foreach(new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dirPath, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST) as $path) {
-            $path->isFile() ? unlink($path->getPathname()) : rmdir($path->getPathname());
+            if(is_writable($path->getPathname())) {
+                $path->isFile() ? unlink($path->getPathname()) : rmdir($path->getPathname());
+            }
+            else {
+                $this->error("Some modules could not be deleted due to insufficient file permissions. Make sure your modules directory and all folders/file inside are writeable.");
+            }
         }
         if($deleteParent) rmdir($dirPath);
     }
 
 
 
-    public function downloadConfirm($name, $update = false) {
+    public function downloadConfirm($name, $upgrade = false) {
 
         $name = $this->wire('sanitizer')->name($name);
         $info = self::getModuleInfo();
-        /*$this->wire('processHeadline', $this->labels['download_install']);
-        $this->wire('breadcrumbs')->add(new Breadcrumb('./', $info['title']));
-        if($update) $this->wire('breadcrumbs')->add(new Breadcrumb("./?edit=$name", $name));*/
 
-        $redirectURL = $update ? "./edit?name=$name" : "./";
+        $redirectURL = $upgrade ? "./edit?name=$name" : "./";
         $className = $name;
         $url = trim($this->wire('config')->moduleServiceURL, '/') . "/$className/?apikey=" . $this->wire('sanitizer')->name($this->wire('config')->moduleServiceKey);
-        //echo $url;
+
         $http = new WireHttp();
         $data = $http->get($url);
-        //print_r($data);exit;
+
         if(empty($data)) {
             $this->error($this->_('Error retrieving data from web service URL') . ' - ' . $http->getError());
             return $this->session->redirect($redirectURL);
@@ -809,10 +1036,17 @@ class ProcessModulesMigrator extends Process implements Module {
             return $this->session->redirect($redirectURL);
         }
         if($data['status'] == 'success') {
-            //$this->error($this->_('Error reported by web service:') . ' ' . wire('sanitizer')->entities($data['error']));
-            //return $this->session->redirect($redirectURL);
 
-            $installed = $this->modules->isInstalled($className) ? $this->modules->getModuleInfoVerbose($className) : null;
+            $installable = true;
+            foreach($data['categories'] as $category) {
+                if(!in_array($category['name'], $this->uninstallableCategories)) continue;
+                $this->error(sprintf($this->_('Sorry modules of type "%s" are not installable from the admin.'), $category['title']));
+                $installable = false;
+                $this->installFailedModuleClassNames[] = $className;
+            }
+            if(!$installable) return;
+
+            $installed = wire('modules')->isInstalled($className) ? $this->modules->getModuleInfoVerbose($className) : null;
             $installedVersion = $this->modules->formatVersion($installed['version']);
             if(version_compare($installedVersion, $data['module_version']) < 0) {
 
@@ -821,22 +1055,130 @@ class ProcessModulesMigrator extends Process implements Module {
                 $install = new ProcessModuleInstall();
 
                 $completedDir = $install->downloadModule($data['download_url'], $destinationDir);
+
+                //install the module
+                $this->modules->get($className);
+
                 if($completedDir) {
+                    $this->installedModuleClassNames[] = $className;
+                    return;
+                }
+                else {
+                    $this->installFailedModuleClassNames[] = $className;
                     return;
                 }
 
             }
 
         }
-
-        /*$installable = true;
-        foreach($data['categories'] as $category) {
-            if(!in_array($category['name'], $this->uninstallableCategories)) continue;
-            $this->error(sprintf($this->_('Sorry modules of type "%s" are not installable from the admin.'), $category['title']));
-            $installable = false;
+        else{
+            $this->installFailedModuleClassNames[] = $className;
         }
-        if(!$installable) $this->session->redirect($redirectURL);*/
 
+    }
+
+
+    // simplified version of the one in ProcessWireUpgradeCheck module - omits checks for core upgrades
+    public function getVersions() {
+        $versions = array();
+        if($this->config->moduleServiceKey) {
+            foreach($this->getModuleVersions(false) as $name => $info) {
+                $versions[$name] = $info;
+            }
+        }
+        return $versions;
+    }
+
+
+
+    // exact copy of the getModuleVersions() method from ProcessWireUpgradeCheck module
+    /**
+     * Cached module versions data
+     *
+     * @param array
+     *
+     */
+    protected $getModuleVersionsData = array();
+
+    /**
+     * Check all site modules for newer versions from the directory
+     *
+     * @param bool $onlyNew Only return array of modules with new versions available
+     * @return array of array(
+     *  'ModuleName' => array(
+     *      'title' => 'Module Title',
+     *      'local' => '1.2.3', // current installed version
+     *      'remote' => '1.2.4', // directory version available, or boolean false if not found in directory
+     *      'new' => true|false, // true if newer version available, false if not
+     *      'requiresVersions' => array('ModuleName' => array('>', '1.2.3')), // module requirements
+     *      )
+     *  )
+     *
+     */
+    public function getModuleVersions($onlyNew = false) {
+
+        if(!$this->config->moduleServiceKey) throw new WireException("This feature requires ProcessWire 2.4.19+");
+
+        $url =  $this->config->moduleServiceURL .
+            "?apikey=" . $this->config->moduleServiceKey .
+            "&limit=100" .
+            "&field=module_version,version,requires_versions" .
+            "&class_name=";
+
+        $names = array();
+        $versions = array();
+
+        foreach($this->modules as $module) {
+            $name = $module->className();
+            $info = $this->modules->getModuleInfoVerbose($name);
+            if($info['core']) continue;
+            $names[] = $name;
+            $versions[$name] = array(
+                'title' => $info['title'],
+                'local' => $this->modules->formatVersion($info['version']),
+                'remote' => false,
+                'new' => 0,
+                'requiresVersions' => $info['requiresVersions']
+                );
+        }
+
+        if(!count($names)) return array();
+        $url .= implode(',', $names);
+
+        $data = $this->getModuleVersionsData;
+        if(empty($data)) {
+            // if not cached
+            $http = new WireHttp();
+            $data = $http->getJSON($url);
+            $this->getModuleVersionsData = $data;
+
+            if(!is_array($data)) {
+                $error = $http->getError();
+                if(!$error) $error = $this->_('Error retrieving modules directory data');
+                $this->error($error . " (" . $this->className() . ")");
+                return array();
+            }
+        }
+
+        foreach($data['items'] as $item) {
+            $name = $item['class_name'];
+            $versions[$name]['remote'] = $item['module_version'];
+            $new = version_compare($versions[$name]['remote'], $versions[$name]['local']);
+            $versions[$name]['new'] = $new;
+                    if($new <= 0) {
+                // local is up-to-date or newer than remote
+                if($onlyNew) unset($versions[$name]);
+            } else {
+                // remote is newer than local
+                $versions[$name]['requiresVersions'] = $item['requires_versions'];
+            }
+        }
+
+        if($onlyNew) foreach($versions as $name => $data) {
+            if($data['remote'] === false) unset($versions[$name]);
+        }
+
+        return $versions;
     }
 
 
@@ -853,7 +1195,7 @@ class ProcessModulesMigrator extends Process implements Module {
 
         $wp = $this->getInstalledPage();
         $this->message("Installed to {$wp->path}");
-        if($wp->parent->name == 'setup') $this->message("Click to your 'Setup' page to start using Modules Migrator");
+        if($wp->parent->name == 'setup') $this->message("Click to your 'Setup' page to start using Module Toolkit");
     }
 
     /**
@@ -872,7 +1214,7 @@ class ProcessModulesMigrator extends Process implements Module {
             $wp->parent = $parent;
             $wp->template = $this->templates->get('admin');
             $wp->name = self::adminPageName;
-            $wp->title = "Modules Migrator";
+            $wp->title = "Module Toolkit";
             $wp->process = $this;
             $wp->sort = $parent->numChildren;
             $wp->save();
