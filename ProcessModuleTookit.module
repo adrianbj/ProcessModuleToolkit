@@ -28,20 +28,20 @@ class ProcessModuleTookit extends Process implements Module {
     public static function getModuleInfo() {
         $settings = array(
             'title' => 'Module Toolkit',
-            'version' => 3,
+            'version' => 4,
             'summary' => 'Automated batch migration, installation and updating of modules and their config settings.',
             'singular' => true,
-            'icon' => 'exchange',
+            'icon' => 'plug',
             'nav' => array(
                 array(
                     'url' => 'export/',
                     'label' => 'Export',
-                    'icon' => 'arrow-right',
+                    'icon' => 'upload',
                 ),
                 array(
                     'url' => 'install/',
                     'label' => 'Install',
-                    'icon' => 'arrow-left'
+                    'icon' => 'sign-in'
                 )
             ),
             'autoload' => function() {
@@ -361,7 +361,7 @@ class ProcessModuleTookit extends Process implements Module {
         $f = $this->modules->get("InputfieldTextarea");
         $f->name = 'modules_list';
         $f->label = 'Text List of Modules to Install';
-        $f->description = "Enter one module class name per line.";
+        $f->description = "Enter one module class name (or URL to zip) per line.";
         $f->notes = "Use this or the zip file upload option, not both.";
         if($this->session->modules_list) $f->attr('value', $this->session->modules_list);
         $f->collapsed = Inputfield::collapsedBlank;
@@ -372,7 +372,7 @@ class ProcessModuleTookit extends Process implements Module {
         $f->label = 'Zip File Upload';
         $f->extensions = 'zip';
         $f->maxFiles = 1;
-        $f->description = "Select a zip file exported from a different Processwire installation.";
+        $f->description = "Select a zip file of modules exported from a different Processwire installation.";
         $f->notes = "Use this or the list of modules option, not both.";
         $f->overwrite = true;
         $f->collapsed = Inputfield::collapsedBlank;
@@ -475,7 +475,6 @@ class ProcessModuleTookit extends Process implements Module {
         }
 
         $f->description = "By default, all modules in the install are checked. Uncheck any modules that you don't want to install.";
-        //$f->setAsmSelectOption('sortable', false);
         $form->add($f);
 
 
@@ -541,6 +540,9 @@ class ProcessModuleTookit extends Process implements Module {
             $modulesList = $this->input->post->modules_list;
             $this->session->modulesList = $modulesList;
 
+            // array of modules currently not installed but available to install
+            $installedModules = $this->getInstallableModules();
+
             foreach(explode("\n", $this->input->post->modules_list) as $module_name) {
                 if(!wire('modules')->isInstalled($module_name)){
                     $info = $this->modules->getModuleInfoVerbose($module_name);
@@ -548,11 +550,24 @@ class ProcessModuleTookit extends Process implements Module {
                         //$requires = $this->modules->getRequiresForInstall($module_name); don't know why this and also isInstallable($module_name, true) wasn't working
                         //if(count($requires)) continue;
                         $this->modules->getInstall($module_name);
-                        $this->downloadConfirm($module_name, true);
+                        $this->downloadAndInstall($module_name, true);
                     }
                     else {
                         $this->installFailedModuleClassNames[] = $module_name;
                     }
+                }
+            }
+
+            // now we've downloaded all requested modules, check to see which new ones are available and install
+            // this is just for URL and local path zip entries. Other modules should have already been installed with the downloadAndInstall() method
+            $newModules = array_diff($this->getInstallableModules(), $installedModules);
+
+            foreach($newModules as $m) {
+                if($this->modules->get($m)) {
+                    $this->installedModuleClassNames[] = $m;
+                }
+                else {
+                    $this->installFailedModuleClassNames[] = $m;
                 }
             }
 
@@ -673,7 +688,7 @@ class ProcessModuleTookit extends Process implements Module {
                         //if(count($requires)) continue;
                         $this->modules->getInstall($module_name);
                         if($this->session->module_settings == 1) $this->modules->saveModuleConfigData($module_name, $this->objectToArray($data));
-                        if($this->session->live_upgrade == 1) $this->downloadConfirm($module_name, true);
+                        if($this->session->live_upgrade == 1) $this->downloadAndInstall($module_name, true);
                     }
                     $this->installedModuleClassNames[] = $module_name;
                 }
@@ -709,7 +724,7 @@ class ProcessModuleTookit extends Process implements Module {
 
         foreach($this->modules as $module){
             if(is_array($this->session->upgrade_modules) && !in_array($module->className(), $this->session->upgrade_modules)) continue; //if not in the list of selected modules to be installed then skip
-            $this->downloadConfirm($module->className(), true);
+            $this->downloadAndInstall($module->className(), true);
             $this->upgradedModuleClassNames[] = $module->className();
         }
 
@@ -1014,65 +1029,72 @@ class ProcessModuleTookit extends Process implements Module {
 
 
 
-    public function downloadConfirm($name, $upgrade = false) {
+    public function downloadAndInstall($name, $upgrade = false) {
 
-        $name = $this->wire('sanitizer')->name($name);
-        $info = self::getModuleInfo();
+        require_once(wire('config')->paths->modules . 'Process/ProcessModule/ProcessModuleInstall.php');
+        $install = new ProcessModuleInstall();
 
-        $redirectURL = $upgrade ? "./edit?name=$name" : "./";
-        $className = $name;
-        $url = trim($this->wire('config')->moduleServiceURL, '/') . "/$className/?apikey=" . $this->wire('sanitizer')->name($this->wire('config')->moduleServiceKey);
-
-        $http = new WireHttp();
-        $data = $http->get($url);
-
-        if(empty($data)) {
-            $this->error($this->_('Error retrieving data from web service URL') . ' - ' . $http->getError());
-            return $this->session->redirect($redirectURL);
+        //URL to zip
+        if (strpos($name,'//') !== false && strpos($name,'.zip') !== false) {
+            $install->downloadModule($name);
         }
-        $data = json_decode($data, true);
-        if(empty($data)) {
-            $this->error($this->_('Error decoding JSON from web service'));
-            return $this->session->redirect($redirectURL);
-        }
-        if($data['status'] == 'success') {
+        // module class name
+        else {
+            $name = $this->wire('sanitizer')->name($name);
+            $info = self::getModuleInfo();
+            $redirectURL = $upgrade ? "./edit?name=$name" : "./";
+            $className = $name;
+            $url = trim($this->wire('config')->moduleServiceURL, '/') . "/$className/?apikey=" . $this->wire('sanitizer')->name($this->wire('config')->moduleServiceKey);
+            $http = new WireHttp();
+            $data = $http->get($url);
 
-            $installable = true;
-            foreach($data['categories'] as $category) {
-                if(!in_array($category['name'], $this->uninstallableCategories)) continue;
-                $this->error(sprintf($this->_('Sorry modules of type "%s" are not installable from the admin.'), $category['title']));
-                $installable = false;
+            if(empty($data)) {
+                $this->error($this->_('Error retrieving data from web service URL') . ' - ' . $http->getError());
+                return $this->session->redirect($redirectURL);
+            }
+            $data = json_decode($data, true);
+            if(empty($data)) {
+                $this->error($this->_('Error decoding JSON from web service'));
+                return $this->session->redirect($redirectURL);
+            }
+
+            if($data['status'] == 'success') {
+
+                $installable = true;
+                foreach($data['categories'] as $category) {
+                    if(!in_array($category['name'], $this->uninstallableCategories)) continue;
+                    $this->error(sprintf($this->_('Sorry modules of type "%s" are not installable from the admin.'), $category['title']));
+                    $installable = false;
+                    $this->installFailedModuleClassNames[] = $className;
+                }
+                if(!$installable) return;
+
+                $installed = wire('modules')->isInstalled($className) ? $this->modules->getModuleInfoVerbose($className) : null;
+                $installedVersion = $this->modules->formatVersion($installed['version']);
+                if(version_compare($installedVersion, $data['module_version']) < 0) {
+
+                    $destinationDir = $this->wire('config')->paths->siteModules . $className . '/';
+                    $completedDir = $install->downloadModule($data['download_url'], $destinationDir);
+
+                    //install the module
+                    $this->modules->get($className);
+
+                    if($completedDir) {
+                        $this->installedModuleClassNames[] = $className;
+                        return;
+                    }
+                    else {
+                        $this->installFailedModuleClassNames[] = $className;
+                        return;
+                    }
+
+                }
+
+            }
+            else{
                 $this->installFailedModuleClassNames[] = $className;
             }
-            if(!$installable) return;
 
-            $installed = wire('modules')->isInstalled($className) ? $this->modules->getModuleInfoVerbose($className) : null;
-            $installedVersion = $this->modules->formatVersion($installed['version']);
-            if(version_compare($installedVersion, $data['module_version']) < 0) {
-
-                $destinationDir = $this->wire('config')->paths->siteModules . $className . '/';
-                require_once(wire('config')->paths->modules . 'Process/ProcessModule/ProcessModuleInstall.php');
-                $install = new ProcessModuleInstall();
-
-                $completedDir = $install->downloadModule($data['download_url'], $destinationDir);
-
-                //install the module
-                $this->modules->get($className);
-
-                if($completedDir) {
-                    $this->installedModuleClassNames[] = $className;
-                    return;
-                }
-                else {
-                    $this->installFailedModuleClassNames[] = $className;
-                    return;
-                }
-
-            }
-
-        }
-        else{
-            $this->installFailedModuleClassNames[] = $className;
         }
 
     }
@@ -1181,6 +1203,13 @@ class ProcessModuleTookit extends Process implements Module {
         return $versions;
     }
 
+
+    public function getInstallableModules() {
+        $modules = $this->wire('modules');
+        $installableModuleNames = array();
+        $installableModuleNames = array_keys($modules->getInstallable());
+        return $installableModuleNames;
+    }
 
 
     /**
