@@ -28,7 +28,7 @@ class ProcessModuleTookit extends Process implements Module {
     public static function getModuleInfo() {
         $settings = array(
             'title' => 'Module Toolkit',
-            'version' => 6,
+            'version' => 8,
             'summary' => 'Automated batch migration, installation and updating of modules and their config settings.',
             'singular' => true,
             'icon' => 'plug',
@@ -386,7 +386,6 @@ class ProcessModuleTookit extends Process implements Module {
         $f->label = 'Text List of Modules to Install';
         $f->description = "Enter one module class name (or URL to zip) per line.";
         $f->notes = "Use this or the JSON or Zip File upload option, not all at once.";
-        if($this->session->modules_list) $f->attr('value', $this->session->modules_list);
         $f->collapsed = Inputfield::collapsedBlank;
         $form->add($f);
 
@@ -395,7 +394,6 @@ class ProcessModuleTookit extends Process implements Module {
         $f->label = 'JSON of Modules to Install and Configure';
         $f->description = "Paste in JSON content exported from another site using this module.";
         $f->notes = "Use this or the Text List or Zip File upload option, not all at once.";
-        if($this->session->modules_list) $f->attr('value', $this->session->modules_list);
         $f->collapsed = Inputfield::collapsedBlank;
         $form->add($f);
 
@@ -616,7 +614,7 @@ class ProcessModuleTookit extends Process implements Module {
 
 
         //for submission of form either without Choose Modules to Install, or the first submission to get the modules from the JSON file
-        if(!$this->input->post->modules_list || $this->input->post->modules_list == ''){
+        if(!$this->input->post->install_modules || $this->input->post->install_modules == ''){
             if($form->get('zip_file')->value != ''){
                 $zipFile = $form->get('zip_file')->value;
                 $this->session->zipFile = $zipFile->first();
