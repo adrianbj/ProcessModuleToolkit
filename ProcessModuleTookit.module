@@ -28,7 +28,7 @@ class ProcessModuleTookit extends Process implements Module {
     public static function getModuleInfo() {
         $settings = array(
             'title' => 'Module Toolkit',
-            'version' => 5,
+            'version' => 6,
             'summary' => 'Automated batch migration, installation and updating of modules and their config settings.',
             'singular' => true,
             'icon' => 'plug',
@@ -297,15 +297,18 @@ class ProcessModuleTookit extends Process implements Module {
                 if($name == 'PHP' || $name == 'ProcessWire') {
                     //don't want to show these requirements
                 } else {
+                    //echo dirname($this->config->urls->$requirementsStr);
+                    //echo $name . ':' . basename($filename) . ':'. basename($this->config->urls->$name) . '<br />';
+                    //if folder of required module matches the module, then don't display in list
+                    if(basename($this->config->urls->$name) == basename($filename)) continue 2;
                     $requirementsStr .= ($requirementsStr ? ', ' : '') . "$name$extra";
                 }
             }
 
-
             $f->addOption($moduleName, $moduleName . ($dependentsStr ? ' (Required by: ' . $dependentsStr .') *' : '') . ($requirementsStr ? ' (Requires: ' . $requirementsStr .') *' : ''));
             $f->attr('value', $moduleName);
         }
-        $f->notes = "* Be careful not to unselect a module that is required by another selected module.";
+        $f->notes = "Companion modules (those that are requirements of the main module and included in the module directory) are intentionally not included in this list.\n* Be careful not to unselect a module that is required by another selected module, but not included in the module directory.";
         $form->add($f);
 
         $this->addSubmit($form, 'Export');
