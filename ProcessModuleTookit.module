@@ -28,7 +28,7 @@ class ProcessModuleTookit extends Process implements Module {
     public static function getModuleInfo() {
         $settings = array(
             'title' => 'Module Toolkit',
-            'version' => 8,
+            'version' => 9,
             'summary' => 'Automated batch migration, installation and updating of modules and their config settings.',
             'singular' => true,
             'icon' => 'plug',
@@ -54,6 +54,12 @@ class ProcessModuleTookit extends Process implements Module {
             'url' => 'upgrade/',
             'label' => 'Upgrade',
             'icon' => 'refresh'
+        );
+
+        $settings['nav'][] = array(
+            'url' => 'cleanup/',
+            'label' => 'Upgrade Cleanup',
+            'icon' => 'trash'
         );
 
 
@@ -182,6 +188,23 @@ class ProcessModuleTookit extends Process implements Module {
 
         if($this->input->post->submit) {
             return $this->processUpgradeForm2($form);
+        } else {
+            return $form->render();
+        }
+
+    }
+
+
+    /**
+     * Executed when ./cleanup/ url for module is accessed
+     *
+     */
+    public function ___executeCleanup() {
+
+        $form = $this->buildCleanupForm2();
+
+        if($this->input->post->submit) {
+            return $this->processCleanupForm2($form);
         } else {
             return $form->render();
         }
@@ -779,6 +802,35 @@ class ProcessModuleTookit extends Process implements Module {
     }
 
 
+    /**
+     * Process the "Cleanup Step 2" form and delete all selected modules
+     *
+     */
+    protected function processCleanupForm2(InputfieldForm $form) {
+
+        $form->processInput($this->input->post);
+
+        if(count($form->getErrors())) return false;
+
+        if($this->input->post){
+            $this->session->upgrade_cleanup = isset($this->input->post->upgrade_cleanup) ? $this->input->post->upgrade_cleanup : '';
+        }
+
+        foreach($this->session->upgrade_cleanup as $item){
+            if(!file_exists($item)) continue;
+            if(!is_dir($item)) {
+                unlink ($item);
+            }
+            else {
+                $this->recursiveDelete($item, true);
+            }
+        }
+
+        return $this->processCleanupForm2Markup();
+
+    }
+
+
 
     public function objectToArray($d) {
         if (is_object($d)) {
@@ -880,6 +932,56 @@ class ProcessModuleTookit extends Process implements Module {
         return $form;
     }
 
+
+    /**
+     * Build the Upgrade Cleanup form
+     *
+     */
+    protected function buildCleanupForm2() {
+
+        $form = $this->modules->get("InputfieldForm");
+        $form->method = 'post';
+        $form->description = "Step 2: Upgrade Cleanup";
+
+        $f = $this->modules->get("InputfieldCheckboxes");
+        $f->name = 'upgrade_cleanup';
+        $f->label = 'Upgrade Cleanup';
+
+        $i=0;
+        //site modules
+        foreach($iterator = new DirectoryIterator($this->config->paths->siteModules) as $item){
+            if($item->isDot() || !$item->isDir()) continue;
+            if(substr($item->getFilename(), 0, 1) !== '.') continue;
+            $f->addOption($item->getPathname(), $item->getFilename());
+            $f->attr('value', $item->getPathname());
+            $i++;
+        }
+
+        //PW core
+        foreach($iterator = new DirectoryIterator($this->config->paths->root) as $item){
+            if($item->isDot()) continue;
+            if(substr($item->getFilename(), 0, 1) !== '.') continue;
+            if(!$item->isDir() && strpos($item->getFilename(), '.htaccess') === false && strpos($item->getFilename(), '.index') === false) continue;
+            if(strpos($item->getFilename(), '.htaccess') !== false && strpos($item->getFilename(), '-') === false) continue;
+            $f->addOption($item->getPathname(), $item->getFilename());
+            $f->attr('value', $item->getPathname());
+            $i++;
+        }
+
+        if($i>0) {
+            $f->description = "All items in this list have backups of old versions that can be deleted. Uncheck any items that you don't want to delete the backups of.";
+            $f->notes = "All the selected item backups will be deleted in one step. Please be sure this is what you want to do before clicking the Cleanup button below.";
+        }
+        else {
+            $f->description = "There are no items that have backups that can be deleted.";
+        }
+
+        $form->add($f);
+
+        $this->addSubmit($form, 'Cleanup Selected Modules');
+
+        return $form;
+    }
 
 
     /**
@@ -1013,6 +1115,19 @@ class ProcessModuleTookit extends Process implements Module {
     }
 
 
+    /**
+     * Provide the completion output markup for processUpgradeForm2
+     *
+     */
+    protected function processCleanupForm2Markup() {
+        $out = '<p>The following backup items were deleted.</p>';
+        foreach($this->session->upgrade_cleanup as $item) {
+            $out .= pathinfo($item, PATHINFO_BASENAME) . '<br />';
+        }
+        return $out;
+    }
+
+
 
 
     /**
@@ -1079,7 +1194,7 @@ class ProcessModuleTookit extends Process implements Module {
                 $path->isFile() ? unlink($path->getPathname()) : rmdir($path->getPathname());
             }
             else {
-                $this->error("Some modules could not be deleted due to insufficient file permissions. Make sure your modules directory and all folders/file inside are writeable.");
+                $this->error("Some files could not be deleted due to insufficient file permissions. Make sure your modules directory and all folders/file inside are writeable.");
             }
         }
         if($deleteParent) rmdir($dirPath);
