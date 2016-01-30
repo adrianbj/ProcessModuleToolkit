@@ -28,7 +28,7 @@ class ProcessModuleTookit extends Process implements Module {
     public static function getModuleInfo() {
         $settings = array(
             'title' => 'Module Toolkit',
-            'version' => 9,
+            'version' => 10,
             'summary' => 'Automated batch migration, installation and updating of modules and their config settings.',
             'singular' => true,
             'icon' => 'plug',
@@ -978,7 +978,7 @@ class ProcessModuleTookit extends Process implements Module {
 
         $form->add($f);
 
-        $this->addSubmit($form, 'Cleanup Selected Modules');
+        if($i>0) $this->addSubmit($form, 'Cleanup Selected Modules');
 
         return $form;
     }
