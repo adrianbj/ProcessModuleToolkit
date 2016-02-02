@@ -28,7 +28,7 @@ class ProcessModuleTookit extends Process implements Module {
     public static function getModuleInfo() {
         $settings = array(
             'title' => 'Module Toolkit',
-            'version' => 12,
+            'version' => 13,
             'summary' => 'Automated batch migration, installation and updating of modules and their config settings.',
             'singular' => true,
             'icon' => 'plug',
@@ -303,7 +303,11 @@ class ProcessModuleTookit extends Process implements Module {
         $f->label = 'Selected Modules';
         $f->required = true;
         $f->description = "Select the modules you want to export.";
+
+        $parentModules = array();
+
         foreach($this->modules as $module){
+
             $moduleInfo = wire('modules')->getModuleInfoVerbose($module->className());
             //error_log(print_r($moduleInfo,true));
             // don't show core modules
@@ -315,8 +319,10 @@ class ProcessModuleTookit extends Process implements Module {
 
             $dependents = $this->modules->getRequiredBy($moduleName, true);
             $requirements = $this->modules->getRequires($moduleName, false, true);
+            $installs = $moduleInfo['installs'];
             $dependentsStr = '';
             $requirementsStr = '';
+            $installsStr = '';
             foreach($dependents as $name) $dependentsStr .= ($dependentsStr ? ', ' : '') . $name;
             foreach($requirements as $name) {
                 if(preg_match('/^([^<>!=]+)([<>!=]+.*)$/', $name, $matches)) {
@@ -333,11 +339,32 @@ class ProcessModuleTookit extends Process implements Module {
                     $requirementsStr .= ($requirementsStr ? ', ' : '') . "$name$extra";
                 }
             }
+           foreach($installs as $name) {
+                $installsStr .= ($installsStr ? ', ' : '') . $name;
+            }
 
-            $f->addOption($moduleName, $moduleName . ($dependentsStr ? ' (Required by: ' . $dependentsStr .') *' : '') . ($requirementsStr ? ' (Requires: ' . $requirementsStr .') *' : ''));
-            $f->attr('value', $moduleName);
+            $parentModules[$moduleName]['name'] = $moduleName;
+            $parentModules[$moduleName]['dependents'] = $dependentsStr;
+            $parentModules[$moduleName]['requirements'] = $requirementsStr;
+            $parentModules[$moduleName]['installs'] = $installsStr;
+            $parentModules[$moduleName]['info'] = wire('modules')->getModuleInfoVerbose($module->className());
+
         }
-        $f->notes = "Companion modules (those that are requirements of the main module and included in the module directory) are intentionally not included in this list.\n* Be careful not to unselect a module that is required by another selected module, but not included in the module directory.";
+
+        foreach($parentModules as $module){
+            $installs = $module['info']['installs'];
+            foreach($installs as $name) {
+                //if module is installed by another, then don't display in list
+                unset($parentModules[$name]);
+            }
+        }
+
+        foreach($parentModules as $m) {
+            $f->addOption($m['name'], $m['name'] . ($m['dependents'] ? ' (Required by: ' . $m['dependents'] .')' : '') . ($m['requirements'] ? ' (Requires: ' . $m['requirements'] .')' : '') . ($m['installs'] ? ' (Installs: ' . $m['installs'] .')' : ''));
+            $f->attr('value', $m['name']);
+        }
+
+        $f->notes = "Companion modules (those that are requirements of, or are installed by, one of the main modules and included in the module directory) are intentionally not included in this list.";
         $form->add($f);
 
         $this->addSubmit($form, 'Export');
@@ -595,7 +622,7 @@ class ProcessModuleTookit extends Process implements Module {
         }
 
         if($this->session->create_backup == 1){
-            $this->backup();
+            $this->createBackup();
         }
 
 
@@ -794,7 +821,7 @@ class ProcessModuleTookit extends Process implements Module {
         }
 
         if($this->session->create_backup == 1){
-            $this->backup();
+            $this->createBackup();
         }
 
         foreach($this->modules as $module){
@@ -1411,7 +1438,7 @@ class ProcessModuleTookit extends Process implements Module {
         return $installableModuleNames;
     }
 
-    public function backup() {
+    public function createBackup() {
 
         $backupDir = $this->config->paths->assets.'moduletoolkitbackups/'.date('Y-m-d_H-i-s');
 
