@@ -28,20 +28,20 @@ class ProcessModuleTookit extends Process implements Module {
     public static function getModuleInfo() {
         $settings = array(
             'title' => 'Module Toolkit',
-            'version' => 11,
+            'version' => 12,
             'summary' => 'Automated batch migration, installation and updating of modules and their config settings.',
             'singular' => true,
             'icon' => 'plug',
             'nav' => array(
                 array(
-                    'url' => 'export/',
-                    'label' => 'Export',
-                    'icon' => 'upload',
-                ),
-                array(
                     'url' => 'install/',
                     'label' => 'Install',
                     'icon' => 'sign-in'
+                ),
+                array(
+                    'url' => 'export/',
+                    'label' => 'Export',
+                    'icon' => 'upload',
                 )
             ),
             'autoload' => function() {
@@ -63,7 +63,7 @@ class ProcessModuleTookit extends Process implements Module {
         );
 
 
-        if(class_exists('WireDatabaseBackup')){ // not present in older version of PW - prior to Aug 19, 2014 (approx 2.4.13)
+        if((class_exists('\ProcessWire\WireDatabaseBackup') || class_exists('WireDatabaseBackup')) && file_exists(wire('config')->paths->assets.'moduletoolkitbackups/')) { // not present in older version of PW - prior to Aug 19, 2014 (approx 2.4.13)
             $settings['nav'][] = array(
                 'url' => 'restore/',
                 'label' => 'Restore',
@@ -222,17 +222,17 @@ class ProcessModuleTookit extends Process implements Module {
 
         $form = $this->modules->get("InputfieldForm");
         $form->method = 'post';
-        $form->description = 'Step 1: Export, Install, Upgrade, Restore';
+        $form->description = 'Step 1: Choose Action';
 
         $f = $this->modules->get("InputfieldSelect");
         $f->name = 'type';
-        $f->label = 'Export, Install, Upgrade, Restore';
+        $f->label = 'Choose Action';
         $f->required = true;
-        $f->addOption('');
-        $f->addOption('export', 'Export');
         $f->addOption('install', 'Install');
+        $f->addOption('export', 'Export');
         $f->addOption('upgrade', 'Upgrade');
-        if(class_exists('WireDatabaseBackup')){ // not present in older version of PW - prior to Aug 19, 2014 (approx 2.4.13)
+        $f->addOption('cleanup', 'Upgrade Cleanup');
+        if((class_exists('\ProcessWire\WireDatabaseBackup') || class_exists('WireDatabaseBackup')) && file_exists(wire('config')->paths->assets.'moduletoolkitbackups/')) { // not present in older version of PW - prior to Aug 19, 2014 (approx 2.4.13)
             $f->addOption('restore', 'Restore');
         }
         if($this->session->type) $f->attr('value', $this->session->type);
@@ -275,6 +275,12 @@ class ProcessModuleTookit extends Process implements Module {
      *
      */
     protected function buildExportForm2() {
+
+        $this->recursiveDelete($this->page->filesManager()->path(), false); //cleanup anything left in the Toolkit assets/files directory from previous failed install
+
+        if(method_exists($this->modules, 'resetCache')) {
+            $this->modules->resetCache();
+        }
 
         $form = $this->modules->get("InputfieldForm");
         $form->method = 'post';
@@ -389,11 +395,17 @@ class ProcessModuleTookit extends Process implements Module {
      */
     protected function buildInstallForm2() {
 
+        $this->recursiveDelete($this->page->filesManager()->path(), false); //cleanup anything left in the Toolkit assets/files directory from previous failed install
+
+        if(method_exists($this->modules, 'resetCache')) {
+            $this->modules->resetCache();
+        }
+
         $form = $this->modules->get("InputfieldForm");
         $form->method = 'post';
         $form->description = "Step 2: Install";
 
-        if(class_exists('WireDatabaseBackup')){ //not present in older version of PW - prior to Aug 19, 2014 (approx 2.4.13)
+        if(class_exists('\ProcessWire\WireDatabaseBackup') || class_exists('WireDatabaseBackup')) { //not present in older version of PW - prior to Aug 19, 2014 (approx 2.4.13)
             $f = $this->modules->get("InputfieldCheckbox");
             $f->name = 'create_backup';
             $f->label = 'Backup existing database and modules directory';
@@ -469,6 +481,12 @@ class ProcessModuleTookit extends Process implements Module {
      *
      */
     protected function buildRestoreForm2() {
+
+        $this->recursiveDelete($this->page->filesManager()->path(), false); //cleanup anything left in the Toolkit assets/files directory from previous failed install
+
+        if(method_exists($this->modules, 'resetCache')) {
+            $this->modules->resetCache();
+        }
 
         $form = $this->modules->get("InputfieldForm");
         $form->method = 'post';
@@ -577,20 +595,7 @@ class ProcessModuleTookit extends Process implements Module {
         }
 
         if($this->session->create_backup == 1){
-
-            $backupDir = $this->config->paths->assets.'moduletoolkitbackups/'.date('Y-m-d_H-i-s');
-
-            if (!file_exists($this->config->paths->assets.'moduletoolkitbackups/')) mkdir($this->config->paths->assets.'moduletoolkitbackups/');
-            if (!file_exists($backupDir)) mkdir($backupDir);
-
-            $backup = new WireDatabaseBackup($backupDir.'/');
-            $backup->setDatabase($this->database);
-            $backup->setDatabaseConfig($this->config);
-
-            $file = $backup->backup(array('filename' => 'moduletoolkitbackup.sql'));
-
-            wireCopy($this->config->paths->siteModules, $backupDir . '/', true);
-
+            $this->backup();
         }
 
 
@@ -784,7 +789,12 @@ class ProcessModuleTookit extends Process implements Module {
         if(count($form->getErrors())) return false;
 
         if($this->input->post){
+            $this->session->create_backup = $form->get('create_backup')->value;
             $this->session->upgrade_modules = isset($this->input->post->upgrade_modules) ? $this->input->post->upgrade_modules : '';
+        }
+
+        if($this->session->create_backup == 1){
+            $this->backup();
         }
 
         foreach($this->modules as $module){
@@ -884,11 +894,17 @@ class ProcessModuleTookit extends Process implements Module {
      */
     protected function buildUpgradeForm2() {
 
+        $this->recursiveDelete($this->page->filesManager()->path(), false); //cleanup anything left in the Toolkit assets/files directory from previous failed install
+
+        if(method_exists($this->modules, 'resetCache')) {
+            $this->modules->resetCache();
+        }
+
         $form = $this->modules->get("InputfieldForm");
         $form->method = 'post';
         $form->description = "Step 2: Upgrade";
 
-        /*if(class_exists('WireDatabaseBackup')){ //not present in older version of PW - prior to Aug 19, 2014 (approx 2.4.13)
+        if(class_exists('\ProcessWire\WireDatabaseBackup') || class_exists('WireDatabaseBackup')) { //not present in older version of PW - prior to Aug 19, 2014 (approx 2.4.13)
             $f = $this->modules->get("InputfieldCheckbox");
             $f->name = 'create_backup';
             $f->label = 'Backup existing database and modules directory';
@@ -896,7 +912,7 @@ class ProcessModuleTookit extends Process implements Module {
             if($this->session->create_backup) $f->attr('value', $this->session->create_backup);
             $f->attr('checked', $this->session->create_backup == '1' ? 'checked' : '' );
             $form->add($f);
-        }*/
+        }
 
         $f = $this->modules->get("InputfieldCheckboxes");
         $f->name = 'upgrade_modules';
@@ -938,6 +954,12 @@ class ProcessModuleTookit extends Process implements Module {
      *
      */
     protected function buildCleanupForm2() {
+
+        $this->recursiveDelete($this->page->filesManager()->path(), false); //cleanup anything left in the Toolkit assets/files directory from previous failed install
+
+        if(method_exists($this->modules, 'resetCache')) {
+            $this->modules->resetCache();
+        }
 
         $form = $this->modules->get("InputfieldForm");
         $form->method = 'post';
@@ -1387,6 +1409,22 @@ class ProcessModuleTookit extends Process implements Module {
         $installableModuleNames = array();
         $installableModuleNames = array_keys($modules->getInstallable());
         return $installableModuleNames;
+    }
+
+    public function backup() {
+
+        $backupDir = $this->config->paths->assets.'moduletoolkitbackups/'.date('Y-m-d_H-i-s');
+
+        if (!file_exists($this->config->paths->assets.'moduletoolkitbackups/')) mkdir($this->config->paths->assets.'moduletoolkitbackups/');
+        if (!file_exists($backupDir)) mkdir($backupDir);
+
+        $backup = new WireDatabaseBackup($backupDir.'/');
+        $backup->setDatabase($this->database);
+        $backup->setDatabaseConfig($this->config);
+
+        $file = $backup->backup(array('filename' => 'moduletoolkitbackup.sql'));
+
+        wireCopy($this->config->paths->siteModules, $backupDir . '/', true);
     }
 
 
