@@ -28,8 +28,9 @@ class ProcessModuleTookit extends Process implements Module {
     public static function getModuleInfo() {
         $settings = array(
             'title' => 'Module Toolkit',
-            'version' => 13,
+            'version' => 15,
             'summary' => 'Automated batch migration, installation and updating of modules and their config settings.',
+            'author' => 'Adrian Jones',
             'singular' => true,
             'icon' => 'plug',
             'nav' => array(
@@ -59,7 +60,7 @@ class ProcessModuleTookit extends Process implements Module {
         $settings['nav'][] = array(
             'url' => 'cleanup/',
             'label' => 'Upgrade Cleanup',
-            'icon' => 'trash'
+            'icon' => 'eraser'
         );
 
 
@@ -107,7 +108,7 @@ class ProcessModuleTookit extends Process implements Module {
         $page = $event->object;
         if($page->process != 'ProcessWireUpgrade') return; // shouldn't be necessary given autoload condition above
 
-        $event->return = str_replace('<table id', '<p><a href="../module_toolkit/upgrade/"><button type="button" class="ui-button ui-state-default"><span class="ui-button-text"><i class="fa fa-refresh"></i> Batch Upgrade Modules</span></button></p><table id', $event->return);
+        $event->return = str_replace('<table id', '<p><a href="../module_toolkit/upgrade/"><button type="button" class="ui-button ui-state-default"><span class="ui-button-text"><i class="fa fa-refresh"></i> Batch Upgrade Modules</span></button></a></p><table id', $event->return);
     }
 
 
@@ -335,12 +336,10 @@ class ProcessModuleTookit extends Process implements Module {
                     //echo dirname($this->config->urls->$requirementsStr);
                     //echo $name . ':' . basename($filename) . ':'. basename($this->config->urls->$name) . '<br />';
                     //if folder of required module matches the module, then don't display in list
-                    if(basename($this->config->urls->$name) == basename($filename)) continue 2;
+                    //if(basename($this->config->urls->$name) == basename($filename)) continue 2;
+                    if(basename($this->config->urls->$name) == basename($filename)) $parentModules[basename($filename)]['settingsOnly'] = 1;
                     $requirementsStr .= ($requirementsStr ? ', ' : '') . "$name$extra";
                 }
-            }
-           foreach($installs as $name) {
-                $installsStr .= ($installsStr ? ', ' : '') . $name;
             }
 
             $parentModules[$moduleName]['name'] = $moduleName;
@@ -348,23 +347,27 @@ class ProcessModuleTookit extends Process implements Module {
             $parentModules[$moduleName]['requirements'] = $requirementsStr;
             $parentModules[$moduleName]['installs'] = $installsStr;
             $parentModules[$moduleName]['info'] = wire('modules')->getModuleInfoVerbose($module->className());
-
+            $parentModules[$moduleName]['settingsOnly'] = 0;
         }
 
-        foreach($parentModules as $module){
-            $installs = $module['info']['installs'];
-            foreach($installs as $name) {
-                //if module is installed by another, then don't display in list
-                unset($parentModules[$name]);
-            }
-        }
+        $finalModulesList = $parentModules;
 
         foreach($parentModules as $m) {
+            $moduleInfo = wire('modules')->getModuleInfoVerbose($m['name']);
+            $installs = $moduleInfo['installs'];
+            foreach($installs as $name) {
+                $installsStr .= ($installsStr ? ', ' : '') . $name;
+                $finalModulesList[$name]['settingsOnly'] = 1;
+            }
+        }
+        foreach($finalModulesList as $m) {
+            if(!isset($m['name'])) continue;
             $f->addOption($m['name'], $m['name'] . ($m['dependents'] ? ' (Required by: ' . $m['dependents'] .')' : '') . ($m['requirements'] ? ' (Requires: ' . $m['requirements'] .')' : '') . ($m['installs'] ? ' (Installs: ' . $m['installs'] .')' : ''));
+            $f->attr('disabled', 'disabled');
             $f->attr('value', $m['name']);
         }
 
-        $f->notes = "Companion modules (those that are requirements of, or are installed by, one of the main modules and included in the module directory) are intentionally not included in this list.";
+        //$f->notes = "Companion modules (those that are requirements of, or are installed by, one of the main modules and included in the module directory) are intentionally not included in this list.";
         $form->add($f);
 
         $this->addSubmit($form, 'Export');
@@ -1009,7 +1012,7 @@ class ProcessModuleTookit extends Process implements Module {
         //PW core
         foreach($iterator = new DirectoryIterator($this->config->paths->root) as $item){
             if($item->isDot()) continue;
-            if(substr($item->getFilename(), 0, 1) !== '.') continue;
+            if(substr($item->getFilename(), 0, 1) !== '.' || strpos($item->getFilename(), '.git') !== false) continue;
             if(!$item->isDir() && strpos($item->getFilename(), '.htaccess') === false && strpos($item->getFilename(), '.index') === false) continue;
             if(strpos($item->getFilename(), '.htaccess') !== false && strpos($item->getFilename(), '-') === false) continue;
             $f->addOption($item->getPathname(), $item->getFilename());
