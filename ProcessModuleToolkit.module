@@ -17,7 +17,7 @@
 
 ini_set('max_execution_time', 300); //300 seconds = 5 minutes
 
-class ProcessModuleTookit extends Process implements Module {
+class ProcessModuleToolkit extends Process implements Module {
 
     /**
      * getModuleInfo is a module required by all modules to tell ProcessWire about them
@@ -28,11 +28,16 @@ class ProcessModuleTookit extends Process implements Module {
     public static function getModuleInfo() {
         $settings = array(
             'title' => 'Module Toolkit',
-            'version' => 15,
+            'version' => '0.2.0',
             'summary' => 'Automated batch migration, installation and updating of modules and their config settings.',
             'author' => 'Adrian Jones',
             'singular' => true,
             'icon' => 'plug',
+            'page' => array(
+                'name' => 'module-toolkit',
+                'parent' => 'setup',
+                'title' => 'Module Toolkit'
+            ),
             'nav' => array(
                 array(
                     'url' => 'install/',
@@ -64,7 +69,7 @@ class ProcessModuleTookit extends Process implements Module {
         );
 
 
-        if((class_exists('\ProcessWire\WireDatabaseBackup') || class_exists('WireDatabaseBackup')) && file_exists(wire('config')->paths->assets.'moduletoolkitbackups/')) { // not present in older version of PW - prior to Aug 19, 2014 (approx 2.4.13)
+        if((class_exists('\ProcessWire\WireDatabaseBackup') || class_exists('WireDatabaseBackup')) && file_exists(wire('config')->paths->assets.'moduletoolkitbackups/')) {
             $settings['nav'][] = array(
                 'url' => 'restore/',
                 'label' => 'Restore',
@@ -75,11 +80,6 @@ class ProcessModuleTookit extends Process implements Module {
         return $settings;
     }
 
-    /**
-     * Name used for the page created in the admin
-     *
-     */
-    const adminPageName = 'module_toolkit';
 
     protected $data = array();
     protected $moduleFiles = array();
@@ -223,7 +223,7 @@ class ProcessModuleTookit extends Process implements Module {
 
         $form = $this->modules->get("InputfieldForm");
         $form->method = 'post';
-        $form->description = 'Step 1: Choose Action';
+        $form->description = 'Choose Action';
 
         $f = $this->modules->get("InputfieldSelect");
         $f->name = 'type';
@@ -239,7 +239,7 @@ class ProcessModuleTookit extends Process implements Module {
         if($this->session->type) $f->attr('value', $this->session->type);
         $form->add($f);
 
-        $this->addSubmit($form, 'Continue to Step 2');
+        $this->addSubmit($form, 'Continue');
 
         return $form;
     }
@@ -285,17 +285,17 @@ class ProcessModuleTookit extends Process implements Module {
 
         $form = $this->modules->get("InputfieldForm");
         $form->method = 'post';
-        $form->description = "Step 2: Choose Modules to Export";
+        $form->description = "Choose Modules to Export";
 
         $f = $this->modules->get("InputfieldSelect");
         $f->name = 'save_or_copy';
         $f->label = 'Output Format';
-        $f->description = "Save zip file to your computer or display a Text list or JSON code so you can copy and then paste into new site.\nNB The \"Copy\" options will not work for migrating modules that are not in the ProcessWire modules directory.";
-        $f->notes = "NB Even if you choose an option with \"Settings\", you can choose to not configure these during install on the new ProcessWire site.";
+        $f->description = "Save zip file to your computer or display a Text list or JSON code so you can copy and then paste into new site.\nThe \"Copy\" options will not work for migrating modules that are not in the ProcessWire modules directory.";
+        $f->notes = "Even if you choose an option with \"Settings\", you can choose to not configure using these settings during install on the new ProcessWire site.";
         $f->required = true;
-        $f->addOption('save', 'Save with Settings (Zip)');
         $f->addOption('copy_list', 'Copy List (Text)');
         $f->addOption('copy_w_settings', 'Copy with Settings (JSON)');
+        $f->addOption('save', 'Save with Settings (Zip)');
         if($this->session->save_or_copy) $f->attr('value', $this->session->save_or_copy);
         $form->add($f);
 
@@ -305,12 +305,13 @@ class ProcessModuleTookit extends Process implements Module {
         $f->required = true;
         $f->description = "Select the modules you want to export.";
 
+        $f->addOption('toggleAll', 'TOGGLE ALL');
+
         $parentModules = array();
 
-        foreach($this->modules as $module){
+        foreach($this->modules as $module) {
 
             $moduleInfo = wire('modules')->getModuleInfoVerbose($module->className());
-            //error_log(print_r($moduleInfo,true));
             // don't show core modules
             //if($moduleInfo['core']) continue; //exclude core modules - this wasn't working. It seems that some modules don't have a "name", hence the use of className below.
             $filename = $this->config->urls->{$module->className()};
@@ -384,12 +385,15 @@ class ProcessModuleTookit extends Process implements Module {
         $form->processInput($this->input->post);
 
         $this->session->save_or_copy = $form->get('save_or_copy')->value;
-        $this->session->selectedModules = $form->get('selectedModules')->value;
+        $selectedModules = $form->get('selectedModules')->value;
+        if($selectedModules[0] === 'toggleAll') unset($selectedModules[0]);
+        $this->session->selectedModules = $selectedModules;
 
-        if($this->session->save_or_copy == 'copy_list'){
+
+        if($this->session->save_or_copy == 'copy_list') {
             return '<p><textarea rows="10" style="width:95%">' . $this->modulesToText($this->session->selectedModules) . '</textarea></p><p>Copy this text and use the Install > Paste option to install these modules.</p><p><a href="../export/">Export more modules</a></p>';
         }
-        elseif($this->session->save_or_copy == 'copy_w_settings'){
+        elseif($this->session->save_or_copy == 'copy_w_settings') {
             return '<p><textarea rows="10" style="width:95%">' . $this->modulesToJSON($this->session->selectedModules, false) . '</textarea></p><p>Copy this text and use the Install > Paste option to install and configure these modules.</p><p><a href="../export/">Export more modules</a></p>';
         }
         else{
@@ -425,7 +429,9 @@ class ProcessModuleTookit extends Process implements Module {
      */
     protected function buildInstallForm2() {
 
-        $this->recursiveDelete($this->page->filesManager()->path(), false); //cleanup anything left in the Toolkit assets/files directory from previous failed install
+        if(!$this->input->post->submit) {
+            $this->recursiveDelete($this->page->filesManager()->path(), false); //cleanup anything left in the Toolkit assets/files directory from previous failed install
+        }
 
         if(method_exists($this->modules, 'resetCache')) {
             $this->modules->resetCache();
@@ -433,7 +439,7 @@ class ProcessModuleTookit extends Process implements Module {
 
         $form = $this->modules->get("InputfieldForm");
         $form->method = 'post';
-        $form->description = "Step 2: Install";
+        $form->description = "Install";
 
         if(class_exists('\ProcessWire\WireDatabaseBackup') || class_exists('WireDatabaseBackup')) { //not present in older version of PW - prior to Aug 19, 2014 (approx 2.4.13)
             $f = $this->modules->get("InputfieldCheckbox");
@@ -442,12 +448,11 @@ class ProcessModuleTookit extends Process implements Module {
             $f->description = "Determines whether to backup the existing database and modules directory before installing the new content.";
             if($this->session->create_backup) $f->attr('value', $this->session->create_backup);
             $f->attr('checked', $this->session->create_backup == '1' ? 'checked' : '' );
-            $f->collapsed = Inputfield::collapsedBlank;
             $form->add($f);
         }
 
         $f = $this->modules->get("InputfieldTextarea");
-        $f->name = 'modules_list';
+        $f->name = 'modulesList';
         $f->label = 'Text List of Modules to Install';
         $f->description = "Enter one module class name (or URL to zip) per line.";
         $f->notes = "Use this or the JSON or Zip File upload option, not all at once.";
@@ -477,7 +482,7 @@ class ProcessModuleTookit extends Process implements Module {
         $f->name = 'module_settings';
         $f->label = 'Install Module Settings';
         $f->showIf = "zip_file|json_data!=''";
-        $f->description = "Determines whether to install the module settings from the source PW install.";
+        $f->description = "Determines whether to configure the module settings from the source PW install, or simply install unconfigured.";
         if($this->session->module_settings) $f->attr('value', $this->session->module_settings);
         $f->attr('checked', $this->session->module_settings == '1' ? 'checked' : '' );
         $form->add($f);
@@ -490,14 +495,6 @@ class ProcessModuleTookit extends Process implements Module {
         if($this->session->live_upgrade) $f->attr('value', $this->session->live_upgrade);
         $f->attr('checked', $this->session->live_upgrade == '1' ? 'checked' : '' );
         $form->add($f);*/
-
-        $f = $this->modules->get("InputfieldCheckbox");
-        $f->name = 'choose_modules';
-        $f->label = 'Choose Modules to Install';
-        $f->showIf = "zip_file|json_data!=''";
-        $f->description = "If checked you will get another step where you can choose exactly which modules you want to install.";
-        $f->attr('checked', $this->session->choose_modules == '1' ? 'checked' : '' );
-        $form->add($f);
 
         $this->addSubmit($form, 'Install Modules');
 
@@ -520,16 +517,16 @@ class ProcessModuleTookit extends Process implements Module {
 
         $form = $this->modules->get("InputfieldForm");
         $form->method = 'post';
-        $form->description = "Step 2: Restore";
+        $form->description = "Restore";
 
         $f = $this->modules->get("InputfieldSelect");
         $f->name = 'restore_directory';
         $f->label = 'Backup to Restore';
         $f->required = true;
-        foreach($iterator = new RecursiveDirectoryIterator($this->config->paths->assets.'moduletoolkitbackups/', RecursiveDirectoryIterator::SKIP_DOTS) as $item){
+        foreach($iterator = new RecursiveDirectoryIterator($this->config->paths->assets.'moduletoolkitbackups/', RecursiveDirectoryIterator::SKIP_DOTS) as $item) {
             if ($item->isDir()) {
 
-                if(strpos($iterator->getSubPathName(),'_') !== false){
+                if(strpos($iterator->getSubPathName(),'_') !== false) {
                     //convert dir name to friendly date / time format for restore select dropdown
                     $optionLabel = strstr($iterator->getSubPathName(), '_', true) . " " . str_replace("-", ":", str_replace("_", "", strstr($iterator->getSubPathName(), '_')));
                 }
@@ -560,18 +557,18 @@ class ProcessModuleTookit extends Process implements Module {
 
         $form = $this->modules->get("InputfieldForm");
         $form->method = 'post';
-        $form->description = "Step 3: Edit Modules to be Installed";
+        $form->description = "Edit Modules to be Installed";
 
 
         $f = $this->modules->get("InputfieldCheckboxes");
-        $f->name = 'install_modules';
+        $f->name = 'installModules';
         $f->label = 'Install Modules';
         $f->required = true;
 
-        foreach($data->modules as $module){
-            foreach($module as $module_name => $data_details){
-                $f->addOption($module_name, $module_name);
-                $f->attr('value', $module_name);
+        foreach($data->modules as $module) {
+            foreach($module as $moduleName => $data_details) {
+                $f->addOption($moduleName, $moduleName);
+                $f->attr('value', $moduleName);
             }
         }
 
@@ -616,45 +613,45 @@ class ProcessModuleTookit extends Process implements Module {
         //$errors = $form->getErrors(true); used to delete automatic field errors since we want to provide custom ones
         if(count($form->getErrors())) return false;
 
-        if($this->input->post){
-            $this->session->install_modules = isset($this->input->post->install_modules) ? $this->input->post->install_modules : array();
+        if($this->input->post) {
+            $this->session->installModules = $this->input->post->installModules ?: array();
             $this->session->module_settings = $form->get('module_settings')->value;
             //$this->session->live_upgrade = $form->get('live_upgrade')->value;
             $this->session->create_backup = $form->get('create_backup')->value;
             if(isset($form->get('jsonFilename')->value)) $this->session->jsonFilename = $form->get('jsonFilename')->value;
         }
 
-        if($this->session->create_backup == 1){
+        if($this->session->create_backup == 1) {
             $this->createBackup();
         }
 
-
-        if($this->input->post->modules_list != ''){
-            $modulesList = $this->input->post->modules_list;
+        if($this->input->post->modulesList != '') {
+            $modulesList = $this->input->post->modulesList;
             $this->session->modulesList = $modulesList;
 
             // array of modules currently not installed but available to install
-            $installedModules = $this->getInstallableModules();
+            $downloadedModules = $this->getInstallableModules();
 
-            foreach(explode("\n", $this->input->post->modules_list) as $module_name) {
-                if(!wire('modules')->isInstalled($module_name)){
-                    $info = $this->modules->getModuleInfoVerbose($module_name);
-                    if(count($info['requires'])==0) {
-                        //$requires = $this->modules->getRequiresForInstall($module_name); don't know why this and also isInstallable($module_name, true) wasn't working
-                        //if(count($requires)) continue;
-                        error_log('1: '.$module_name);
-                        $this->modules->getInstall($module_name);
-                        $this->downloadAndInstall($module_name, true);
+            foreach(explode("\n", $this->input->post->modulesList) as $moduleName) {
+                $moduleName = trim($moduleName);
+                if(!wire('modules')->isInstalled($moduleName)) {
+                    $info = $this->modules->getModuleInfoVerbose($moduleName);
+                    $requires = array();
+                    if(count($info['requires'])) $requires = $this->modules->getRequiresForInstall($moduleName);
+                    if(!count($requires)) {
+                        $this->modules->getInstall($moduleName);
+                        $this->downloadAndInstall($moduleName, true);
+                        $this->installedModuleClassNames[] = $moduleName;
                     }
                     else {
-                        $this->installFailedModuleClassNames[] = $module_name;
+                        $this->installFailedModuleClassNames[] = $moduleName;
                     }
                 }
             }
 
             // now we've downloaded all requested modules, check to see which new ones are available and install
             // this is just for URL and local path zip entries. Other modules should have already been installed with the downloadAndInstall() method
-            $newModules = array_diff($this->getInstallableModules(), $installedModules);
+            $newModules = array_diff($this->getInstallableModules(), $downloadedModules);
 
             foreach($newModules as $m) {
                 if($this->modules->get($m)) {
@@ -670,10 +667,9 @@ class ProcessModuleTookit extends Process implements Module {
             return $this->processInstallForm2Markup();
         }
 
-
         //for submission of form either without Choose Modules to Install, or the first submission to get the modules from the JSON file
-        if(!$this->input->post->install_modules || $this->input->post->install_modules == ''){
-            if($form->get('zip_file')->value != ''){
+        if(!$this->input->post->installModules || $this->input->post->installModules == '') {
+            if($form->get('zip_file')->value != '') {
                 $zipFile = $form->get('zip_file')->value;
                 $this->session->zipFile = $zipFile->first();
                 $this->session->zipFile->rename("data.zip");
@@ -689,7 +685,7 @@ class ProcessModuleTookit extends Process implements Module {
                 $this->session->remove("jsonData");
             }
 
-            if($this->session->zipFilename!=''){
+            if($this->session->zipFilename!='') {
                 // extract uploaded zip to destination PW installation
                 $zip = new ZipArchive;
                 if($zip->open($this->session->zipFilename) === TRUE) {
@@ -703,7 +699,7 @@ class ProcessModuleTookit extends Process implements Module {
                     $destDir = $this->config->paths->siteModules.'/';
 
                     // check write permissions on modules directory and fail with friendly error
-                    if(file_exists($srcDir) && !is_writable($destDir)){
+                    if(file_exists($srcDir) && !is_writable($destDir)) {
                         if($this->session->toolkitFilesDir && file_exists($this->session->toolkitFilesDir)) $this->recursiveDelete($this->session->toolkitFilesDir);
                         $this->error("The modules directory is not writeable. Please change permissions and try again.");
                         $form->get('zip_file')->value = '';
@@ -713,14 +709,14 @@ class ProcessModuleTookit extends Process implements Module {
                     //move module files into the modules directory
                     if (file_exists($srcDir) && is_dir($srcDir) && $handle = opendir($srcDir)) {
                         $i=0;
-                        foreach($iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($srcDir, RecursiveDirectoryIterator::SKIP_DOTS), RecursiveIteratorIterator::SELF_FIRST) as $item){
+                        foreach($iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($srcDir, RecursiveDirectoryIterator::SKIP_DOTS), RecursiveIteratorIterator::SELF_FIRST) as $item) {
                             if(pathinfo($item, PATHINFO_BASENAME) == 'data.json') continue;
                             $modulePath = str_replace($this->session->toolkitFilesDir . '/', '', $item);
                             $moduleName = strpos($modulePath,'/') !== false ? strstr($modulePath, '/', true) : $modulePath;
                             if(wire('modules')->isInstalled($moduleName)) continue; //if already installed then skip
-                            if(!empty($this->session->install_modules) && !in_array($moduleName, $this->session->install_modules)) continue; //if not in the list of selected modules to be installed then skip
+                            if(!empty($this->session->installModules) && !in_array($moduleName, $this->session->installModules)) continue; //if not in the list of selected modules to be installed then skip
                             if ($item->isDir()) {
-                                if(!file_exists($destDir . $iterator->getSubPathName())){
+                                if(!file_exists($destDir . $iterator->getSubPathName())) {
                                     mkdir($destDir . str_replace("//", "/", $iterator->getSubPathName()));
                                 }
                             }
@@ -737,7 +733,7 @@ class ProcessModuleTookit extends Process implements Module {
                     }
                 }
             }
-            elseif(file_exists($this->session->toolkitFilesDir)){
+            elseif(file_exists($this->session->toolkitFilesDir)) {
                 //no need to do anything since the directory of files already exists
                 //this would be the case when "Choose Modules to Install" was selected.
             }
@@ -756,7 +752,7 @@ class ProcessModuleTookit extends Process implements Module {
             $fp = file_get_contents($this->session->jsonFilename);
 
             //if no data source provided, return an error. This check probably isn't necessary because of the ones above.
-            if(empty($fp)){
+            if(empty($fp)) {
 
                 $this->error("Missing required ZIP or JSON Source");
                 if($this->session->toolkitFilesDir && file_exists($this->session->toolkitFilesDir)) $this->recursiveDelete($this->session->toolkitFilesDir);
@@ -768,29 +764,33 @@ class ProcessModuleTookit extends Process implements Module {
             $data = json_decode($fp);
 
         }
+        else {
+            $fp = file_get_contents($this->session->jsonFilename);
+            $data = json_decode($fp);
+        }
 
 
-        //if selected, redirect to form to allow user to determine which modules get installed
-        if($this->input->post->choose_modules=='1'){
+        //if not provided yet, display form to allow user to determine which modules get installed
+        if(!$this->input->post->installModules || $this->input->post->installModules == '') {
             $form = $this->buildInstallForm3($data);
             return $form->render();
         }
 
-        foreach($data->modules as $modules){
-            foreach($modules as $module_name => $data_details){
-                if(!empty($this->session->install_modules) && !in_array($module_name, $this->session->install_modules)) continue; //if not in the list of selected modules to be installed then skip
-                //$this->modules->get($module_name);
-                if(!wire('modules')->isInstalled($module_name)){
-                    $info = $this->modules->getModuleInfoVerbose($module_name);
+        foreach($data->modules as $modules) {
+            foreach($modules as $moduleName => $data_details) {
+                if(!in_array($moduleName, $this->session->installModules)) continue; //if not in the list of selected modules to be installed then skip
+                //$this->modules->get($moduleName);
+                if(!wire('modules')->isInstalled($moduleName)) {
+                    $info = $this->modules->getModuleInfoVerbose($moduleName);
                     //if(count($info['requires'])==0) {
-                        //$requires = $this->modules->getRequiresForInstall($module_name); don't know why this and also isInstallable($module_name, true) wasn't working
+                        //$requires = $this->modules->getRequiresForInstall($moduleName); don't know why this and also isInstallable($moduleName, true) wasn't working
                         //if(count($requires)) continue;
-                        $this->modules->getInstall($module_name);
-                        if($this->session->jsonData) $this->downloadAndInstall($module_name, true); // if only json need to download and install before saving config settings
-                        if($this->session->module_settings == 1) $this->modules->saveModuleConfigData($module_name, $this->objectToArray($data_details));
-                        //if(!$this->session->jsonData && $this->session->live_upgrade == 1) $this->downloadAndInstall($module_name, true);
+                        $this->modules->getInstall($moduleName);
+                        if($this->session->jsonData) $this->downloadAndInstall($moduleName, true); // if only json need to download and install before saving config settings
+                        if($this->session->module_settings == 1) $this->modules->saveModuleConfigData($moduleName, $this->objectToArray($data_details));
+                        //if(!$this->session->jsonData && $this->session->live_upgrade == 1) $this->downloadAndInstall($moduleName, true);
                     //}
-                    $this->installedModuleClassNames[] = $module_name;
+                    $this->installedModuleClassNames[] = $moduleName;
                 }
             }
         }
@@ -818,16 +818,16 @@ class ProcessModuleTookit extends Process implements Module {
 
         if(count($form->getErrors())) return false;
 
-        if($this->input->post){
+        if($this->input->post) {
             $this->session->create_backup = $form->get('create_backup')->value;
-            $this->session->upgrade_modules = isset($this->input->post->upgrade_modules) ? $this->input->post->upgrade_modules : '';
+            $this->session->upgrade_modules = $this->input->post->upgrade_modules ?: '';
         }
 
-        if($this->session->create_backup == 1){
+        if($this->session->create_backup == 1) {
             $this->createBackup();
         }
 
-        foreach($this->modules as $module){
+        foreach($this->modules as $module) {
             if(is_array($this->session->upgrade_modules) && !in_array($module->className(), $this->session->upgrade_modules)) continue; //if not in the list of selected modules to be installed then skip
             $this->downloadAndInstall($module->className(), true);
             $this->upgradedModuleClassNames[] = $module->className();
@@ -852,17 +852,20 @@ class ProcessModuleTookit extends Process implements Module {
 
         if(count($form->getErrors())) return false;
 
-        if($this->input->post){
-            $this->session->upgrade_cleanup = isset($this->input->post->upgrade_cleanup) ? $this->input->post->upgrade_cleanup : '';
+        if($this->input->post) {
+            $this->session->upgradeCleanup = $this->input->post->upgradeCleanup ?: '';
         }
 
-        foreach($this->session->upgrade_cleanup as $item){
-            if(!file_exists($item)) continue;
-            if(!is_dir($item)) {
-                unlink ($item);
-            }
-            else {
-                $this->recursiveDelete($item, true);
+        if(is_array($this->session->upgradeCleanup)) {
+            foreach($this->session->upgradeCleanup as $item) {
+                if($item == 'toggleAll') continue;
+                if(!file_exists($item)) continue;
+                if(!is_dir($item)) {
+                    unlink ($item);
+                }
+                else {
+                    $this->recursiveDelete($item, true);
+                }
             }
         }
 
@@ -905,7 +908,7 @@ class ProcessModuleTookit extends Process implements Module {
 
         $this->recursiveDelete($this->config->paths->siteModules, false); //clean up modules folder so it will only contain those files from the backup
 
-        if(wireCopy($this->config->paths->assets.'moduletoolkitbackups/' . $this->input->post->restore_directory . '/', $this->config->paths->siteModules, true)){
+        if(wireCopy($this->config->paths->assets.'moduletoolkitbackups/' . $this->input->post->restore_directory . '/', $this->config->paths->siteModules, true)) {
             $this->message("Modules directory successfully restored.");
         }
         else{
@@ -932,7 +935,7 @@ class ProcessModuleTookit extends Process implements Module {
 
         $form = $this->modules->get("InputfieldForm");
         $form->method = 'post';
-        $form->description = "Step 2: Upgrade";
+        $form->description = "Upgrade";
 
         if(class_exists('\ProcessWire\WireDatabaseBackup') || class_exists('WireDatabaseBackup')) { //not present in older version of PW - prior to Aug 19, 2014 (approx 2.4.13)
             $f = $this->modules->get("InputfieldCheckbox");
@@ -993,15 +996,17 @@ class ProcessModuleTookit extends Process implements Module {
 
         $form = $this->modules->get("InputfieldForm");
         $form->method = 'post';
-        $form->description = "Step 2: Upgrade Cleanup";
+        $form->description = "Upgrade Cleanup";
 
         $f = $this->modules->get("InputfieldCheckboxes");
-        $f->name = 'upgrade_cleanup';
+        $f->name = 'upgradeCleanup';
         $f->label = 'Upgrade Cleanup';
+
+        $f->addOption('toggleAll', 'TOGGLE ALL');
 
         $i=0;
         //site modules
-        foreach($iterator = new DirectoryIterator($this->config->paths->siteModules) as $item){
+        foreach($iterator = new DirectoryIterator($this->config->paths->siteModules) as $item) {
             if($item->isDot() || !$item->isDir()) continue;
             if(substr($item->getFilename(), 0, 1) !== '.') continue;
             $f->addOption($item->getPathname(), $item->getFilename());
@@ -1010,7 +1015,7 @@ class ProcessModuleTookit extends Process implements Module {
         }
 
         //PW core
-        foreach($iterator = new DirectoryIterator($this->config->paths->root) as $item){
+        foreach($iterator = new DirectoryIterator($this->config->paths->root) as $item) {
             if($item->isDot()) continue;
             if(substr($item->getFilename(), 0, 1) !== '.' || strpos($item->getFilename(), '.git') !== false) continue;
             if(!$item->isDir() && strpos($item->getFilename(), '.htaccess') === false && strpos($item->getFilename(), '.index') === false) continue;
@@ -1021,7 +1026,7 @@ class ProcessModuleTookit extends Process implements Module {
         }
 
         if($i>0) {
-            $f->description = "All items in this list have backups of old versions that can be deleted. Uncheck any items that you don't want to delete the backups of.";
+            $f->description = "All items in this list have backups of old versions that can be deleted. Uncheck any items that you don't want to delete.";
             $f->notes = "All the selected item backups will be deleted in one step. Please be sure this is what you want to do before clicking the Cleanup button below.";
         }
         else {
@@ -1048,7 +1053,7 @@ class ProcessModuleTookit extends Process implements Module {
         $i=0;
         foreach($items as $item) {
 
-            if(!in_array($item, $modules_array)){
+            if(!in_array($item, $modules_array)) {
                 $a['modules'][] = $this->pageToArray($item);
                 $modules_array[] = $item;
                 $moduleInfo = wire('modules')->getModuleInfoVerbose($item);
@@ -1067,8 +1072,8 @@ class ProcessModuleTookit extends Process implements Module {
             //Create zip of modules
             $allfiles = array();
             $i=0;
-            foreach($this->moduleFiles as $modulepath){
-                if(is_dir($this->config->paths->siteModules . $modulepath)){
+            foreach($this->moduleFiles as $modulepath) {
+                if(is_dir($this->config->paths->siteModules . $modulepath)) {
                     $dir = new DirectoryIterator($this->config->paths->siteModules . $modulepath);
                     foreach($dir as $file) {
                         if($file->isDir() || $file->isDot()) continue;
@@ -1109,7 +1114,7 @@ class ProcessModuleTookit extends Process implements Module {
         $modules_array = array();
         $i=0;
         foreach($items as $item) {
-            if(!in_array($item, $modules_array)){
+            if(!in_array($item, $modules_array)) {
                 $a .= $item . "\n";
                 $modules_array[] = $item;
             }
@@ -1126,7 +1131,7 @@ class ProcessModuleTookit extends Process implements Module {
      */
     protected function processInstallForm2Markup() {
         $out = '';
-        if(count($this->installedModuleClassNames)>0){
+        if(count($this->installedModuleClassNames)>0) {
             $out .= "<p><strong>The following modules were successfully installed:</strong></p><p>";
             foreach(array_unique($this->installedModuleClassNames) as $moduleClassName) {
                 $out .= '<a href="'.$this->config->urls->admin.'module/edit?name='.$moduleClassName.'">' . $moduleClassName .'</a><br />';
@@ -1136,7 +1141,7 @@ class ProcessModuleTookit extends Process implements Module {
             $out .= "<p><strong>No modules were installed.</strong></p>";
         }
 
-        if(count($this->installFailedModuleClassNames)>0){
+        if(count($this->installFailedModuleClassNames)>0) {
             $out .= "<p><strong>The following modules failed to install:</strong></p>";
             foreach(array_unique($this->installFailedModuleClassNames) as $moduleClassName) {
                 $out .= $moduleClassName .'<br />';
@@ -1155,7 +1160,7 @@ class ProcessModuleTookit extends Process implements Module {
      */
     protected function processUpgradeForm2Markup() {
         $out = '';
-        if(count($this->upgradedModuleClassNames)>0){
+        if(count($this->upgradedModuleClassNames)>0) {
             $out .= "<p><strong>The following modules were successfullly upgraded:</strong></p><p>";
             foreach(array_unique($this->upgradedModuleClassNames) as $moduleClassName) {
                 $out .= '<a href="'.$this->config->urls->admin.'module/edit?name='.$moduleClassName.'">' . $moduleClassName .'</a><br />';
@@ -1172,9 +1177,14 @@ class ProcessModuleTookit extends Process implements Module {
      *
      */
     protected function processCleanupForm2Markup() {
-        $out = '<p>The following backup items were deleted.</p>';
-        foreach($this->session->upgrade_cleanup as $item) {
-            $out .= pathinfo($item, PATHINFO_BASENAME) . '<br />';
+        if(is_array($this->session->upgradeCleanup)) {
+            $out = '<p>The following backup items were deleted.</p>';
+            foreach($this->session->upgradeCleanup as $item) {
+                $out .= pathinfo($item, PATHINFO_BASENAME) . '<br />';
+            }
+        }
+        else {
+            $out = '<p>There were no items to be deleted.</p>';
         }
         return $out;
     }
@@ -1214,12 +1224,12 @@ class ProcessModuleTookit extends Process implements Module {
             $zip = new ZipArchive();
             if($zip->open($destination, $overwrite ? ZIPARCHIVE::OVERWRITE : ZIPARCHIVE::CREATE) !== true) return false;
             //add the files
-            if($filetype == 'files'){
+            if($filetype == 'files') {
                 foreach($valid_files as $path => $file) {
                     $zip->addFile($file['currentpath'],$file['newpath']);
                 }
             }
-            elseif($filetype == 'json'){
+            elseif($filetype == 'json') {
                 foreach($valid_files as $file) {
                     $zip->addFile($file, pathinfo($file, PATHINFO_BASENAME));
                 }
@@ -1240,7 +1250,7 @@ class ProcessModuleTookit extends Process implements Module {
      * Function to recursively delete an entire folder
      *
      */
-    public function recursiveDelete($dirPath, $deleteParent = true){
+    public function recursiveDelete($dirPath, $deleteParent = true) {
         foreach(new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dirPath, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST) as $path) {
             if(is_writable($path->getPathname())) {
                 $path->isFile() ? unlink($path->getPathname()) : rmdir($path->getPathname());
@@ -1457,57 +1467,5 @@ class ProcessModuleTookit extends Process implements Module {
         wireCopy($this->config->paths->siteModules, $backupDir . '/', true);
     }
 
-
-    /**
-     * Install the module and create the page where it lives
-     *
-     */
-    public function ___install() {
-
-        if(ProcessWire::versionMajor == 2 && ProcessWire::versionMinor < 4) {
-            throw new WireException("This module requires ProcessWire 2.4 or newer");
-        }
-
-        $wp = $this->getInstalledPage();
-        $this->message("Installed to {$wp->path}");
-        if($wp->parent->name == 'setup') $this->message("Click to your 'Setup' page to start using Module Toolkit");
-    }
-
-    /**
-     * Return the page that this Process is installed on
-     *
-     */
-    protected function getInstalledPage() {
-
-        $admin = $this->pages->get($this->config->adminRootPageID);
-        $parent = $admin->child("name=setup");
-        if(!$parent->id) $parent = $admin;
-        $wp = $parent->child("name=" . self::adminPageName);
-
-        if(!$wp->id) {
-            $wp = new Page();
-            $wp->parent = $parent;
-            $wp->template = $this->templates->get('admin');
-            $wp->name = self::adminPageName;
-            $wp->title = "Module Toolkit";
-            $wp->process = $this;
-            $wp->sort = $parent->numChildren;
-            $wp->save();
-        }
-
-        return $wp;
-    }
-
-    /**
-     * Uninstall the module
-     *
-     */
-    public function ___uninstall() {
-        $wp = $this->getInstalledPage();
-        if($wp->id) {
-            $this->message("Removed {$wp->path}");
-            $this->pages->delete($wp);
-        }
-    }
 
 }
