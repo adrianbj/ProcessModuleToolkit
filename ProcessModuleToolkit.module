@@ -28,7 +28,7 @@ class ProcessModuleToolkit extends Process implements Module {
     public static function getModuleInfo() {
         $settings = array(
             'title' => 'Module Toolkit',
-            'version' => '0.2.1',
+            'version' => '0.2.2',
             'summary' => 'Automated batch migration, installation and updating of modules and their config settings.',
             'author' => 'Adrian Jones',
             'singular' => true,
@@ -315,7 +315,7 @@ class ProcessModuleToolkit extends Process implements Module {
             // don't show core modules
             //if($moduleInfo['core']) continue; //exclude core modules - this wasn't working. It seems that some modules don't have a "name", hence the use of className below.
             $filename = $this->config->urls->{$module->className()};
-            if(preg_match('%^\/wire\/%Uis', $filename) || !wire('modules')->isInstalled($module)) continue;
+            //if(preg_match('%^\/wire\/%Uis', $filename) || !wire('modules')->isInstalled($module)) continue;
 
             $moduleName = $module->className();
 
@@ -640,7 +640,9 @@ class ProcessModuleToolkit extends Process implements Module {
                     if(count($info['requires'])) $requires = $this->modules->getRequiresForInstall($moduleName);
                     if(!count($requires)) {
                         $this->modules->getInstall($moduleName);
-                        if(!wire('modules')->isInstalled($moduleName)) $this->downloadAndInstall($moduleName, true);
+                        if(!wire('modules')->isInstalled($moduleName)) {
+                            $this->downloadAndInstall($moduleName, true);
+                        }
                         $this->installedModuleClassNames[] = $moduleName;
                     }
                     else {
@@ -786,7 +788,11 @@ class ProcessModuleToolkit extends Process implements Module {
                         //$requires = $this->modules->getRequiresForInstall($moduleName); don't know why this and also isInstallable($moduleName, true) wasn't working
                         //if(count($requires)) continue;
                         $this->modules->getInstall($moduleName);
-                        if($this->session->jsonData) $this->downloadAndInstall($moduleName, true); // if only json need to download and install before saving config settings
+                        if($this->session->jsonData) {
+                            if(!wire('modules')->isInstalled($moduleName)) {
+                                $this->downloadAndInstall($moduleName, true); // if only json need to download and install before saving config settings
+                            }
+                        }
                         if($this->session->module_settings == 1) $this->modules->saveModuleConfigData($moduleName, $this->objectToArray($data_details));
                         //if(!$this->session->jsonData && $this->session->live_upgrade == 1) $this->downloadAndInstall($moduleName, true);
                     //}
