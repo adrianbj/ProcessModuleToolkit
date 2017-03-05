@@ -28,7 +28,7 @@ class ProcessModuleToolkit extends Process implements Module {
     public static function getModuleInfo() {
         $settings = array(
             'title' => 'Module Toolkit',
-            'version' => '0.2.0',
+            'version' => '0.2.1',
             'summary' => 'Automated batch migration, installation and updating of modules and their config settings.',
             'author' => 'Adrian Jones',
             'singular' => true,
@@ -630,7 +630,7 @@ class ProcessModuleToolkit extends Process implements Module {
             $this->session->modulesList = $modulesList;
 
             // array of modules currently not installed but available to install
-            $downloadedModules = $this->getInstallableModules();
+            $installableModules = $this->getInstallableModules();
 
             foreach(explode("\n", $this->input->post->modulesList) as $moduleName) {
                 $moduleName = trim($moduleName);
@@ -640,7 +640,7 @@ class ProcessModuleToolkit extends Process implements Module {
                     if(count($info['requires'])) $requires = $this->modules->getRequiresForInstall($moduleName);
                     if(!count($requires)) {
                         $this->modules->getInstall($moduleName);
-                        $this->downloadAndInstall($moduleName, true);
+                        if(!wire('modules')->isInstalled($moduleName)) $this->downloadAndInstall($moduleName, true);
                         $this->installedModuleClassNames[] = $moduleName;
                     }
                     else {
@@ -651,7 +651,7 @@ class ProcessModuleToolkit extends Process implements Module {
 
             // now we've downloaded all requested modules, check to see which new ones are available and install
             // this is just for URL and local path zip entries. Other modules should have already been installed with the downloadAndInstall() method
-            $newModules = array_diff($this->getInstallableModules(), $downloadedModules);
+            $newModules = array_diff($this->getInstallableModules(), $installableModules);
 
             foreach($newModules as $m) {
                 if($this->modules->get($m)) {
