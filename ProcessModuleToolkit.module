@@ -1022,10 +1022,16 @@ class ProcessModuleToolkit extends Process implements Module {
 
         //PW core
         foreach($iterator = new DirectoryIterator($this->config->paths->root) as $item) {
+            // skip the . and .. directories
             if($item->isDot()) continue;
-            if(substr($item->getFilename(), 0, 1) !== '.' || strpos($item->getFilename(), '.git') !== false) continue;
-            if(!$item->isDir() && strpos($item->getFilename(), '.htaccess') === false && strpos($item->getFilename(), '.index') === false) continue;
-            if(strpos($item->getFilename(), '.htaccess') !== false && strpos($item->getFilename(), '-') === false) continue;
+
+            // only include specific files and folders
+            if(strpos($item->getFilename(), 'index-') === false &&
+               strpos($item->getFilename(), '.index-') === false &&
+               strpos($item->getFilename(), 'htaccess-') === false &&
+               strpos($item->getFilename(), '.htaccess-') === false &&
+               strpos($item->getFilename(), '.wire-') === false)continue;
+
             $f->addOption($item->getPathname(), $item->getFilename());
             $f->attr('value', $item->getPathname());
             $i++;
