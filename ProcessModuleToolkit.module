@@ -108,7 +108,7 @@ class ProcessModuleToolkit extends Process implements Module {
         $page = $event->object;
         if($page->process != 'ProcessWireUpgrade') return; // shouldn't be necessary given autoload condition above
 
-        $event->return = str_replace('<table id', '<p><a href="../module_toolkit/upgrade/"><button type="button" class="ui-button ui-state-default"><span class="ui-button-text"><i class="fa fa-refresh"></i> Batch Upgrade Modules</span></button></a></p><table id', $event->return);
+        $event->return = str_replace('<table id', '<p><a href="../module-toolkit/upgrade/"><button type="button" class="ui-button ui-state-default"><span class="ui-button-text"><i class="fa fa-refresh"></i> Batch Upgrade Modules</span></button></a></p><table id', $event->return);
     }
 
 
