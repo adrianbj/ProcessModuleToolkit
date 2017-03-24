@@ -1027,10 +1027,8 @@ class ProcessModuleToolkit extends Process implements Module {
 
             // only include specific files and folders
             if(strpos($item->getFilename(), 'index-') === false &&
-               strpos($item->getFilename(), '.index-') === false &&
                strpos($item->getFilename(), 'htaccess-') === false &&
-               strpos($item->getFilename(), '.htaccess-') === false &&
-               strpos($item->getFilename(), '.wire-') === false)continue;
+               strpos($item->getFilename(), 'wire-') === false)continue;
 
             $f->addOption($item->getPathname(), $item->getFilename());
             $f->attr('value', $item->getPathname());
