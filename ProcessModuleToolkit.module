@@ -28,7 +28,7 @@ class ProcessModuleToolkit extends Process implements Module {
     public static function getModuleInfo() {
         $settings = array(
             'title' => 'Module Toolkit',
-            'version' => '0.2.2',
+            'version' => '0.2.3',
             'summary' => 'Automated batch migration, installation and updating of modules and their config settings.',
             'author' => 'Adrian Jones',
             'singular' => true,
