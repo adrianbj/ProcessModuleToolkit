@@ -28,7 +28,7 @@ class ProcessModuleToolkit extends Process implements Module {
     public static function getModuleInfo() {
         $settings = array(
             'title' => 'Module Toolkit',
-            'version' => '0.2.3',
+            'version' => '0.2.4',
             'summary' => 'Automated batch migration, installation and updating of modules and their config settings.',
             'author' => 'Adrian Jones',
             'singular' => true,
@@ -1190,6 +1190,7 @@ class ProcessModuleToolkit extends Process implements Module {
         if(is_array($this->session->upgradeCleanup)) {
             $out = '<p>The following backup items were deleted.</p>';
             foreach($this->session->upgradeCleanup as $item) {
+                if($item == 'toggleAll') continue;
                 $out .= pathinfo($item, PATHINFO_BASENAME) . '<br />';
             }
         }
