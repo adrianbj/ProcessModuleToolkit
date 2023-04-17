@@ -6,12 +6,8 @@
  *
  * Automated batch migration, installation and updating of modules and their config settings.
  *
- * ProcessWire 2.x
- * Copyright (C) 2011 by Ryan Cramer
+ * Copyright (C) 2023 by Adrian Jones
  * Licensed under GNU/GPL v2, see LICENSE.TXT
- *
- * http://www.processwire.com
- * http://www.ryancramer.com
  *
  */
 
@@ -28,7 +24,7 @@ class ProcessModuleToolkit extends Process implements Module {
     public static function getModuleInfo() {
         $settings = array(
             'title' => 'Module Toolkit',
-            'version' => '0.2.4',
+            'version' => '0.2.5',
             'summary' => 'Automated batch migration, installation and updating of modules and their config settings.',
             'author' => 'Adrian Jones',
             'singular' => true,
@@ -118,8 +114,8 @@ class ProcessModuleToolkit extends Process implements Module {
      */
     public function ___execute() {
 
-        if(method_exists($this->modules, 'resetCache')) {
-            $this->modules->resetCache();
+        if(method_exists($this->wire('modules'), 'resetCache')) {
+            $this->wire('modules')->resetCache();
         }
 
         $form = $this->buildForm1();
@@ -221,11 +217,11 @@ class ProcessModuleToolkit extends Process implements Module {
      */
     protected function buildForm1() {
 
-        $form = $this->modules->get("InputfieldForm");
+        $form = $this->wire('modules')->get("InputfieldForm");
         $form->method = 'post';
         $form->description = 'Choose Action';
 
-        $f = $this->modules->get("InputfieldSelect");
+        $f = $this->wire('modules')->get("InputfieldSelect");
         $f->name = 'type';
         $f->label = 'Choose Action';
         $f->required = true;
@@ -233,7 +229,7 @@ class ProcessModuleToolkit extends Process implements Module {
         $f->addOption('export', 'Export');
         $f->addOption('upgrade', 'Upgrade');
         $f->addOption('cleanup', 'Upgrade Cleanup');
-        if((class_exists('\ProcessWire\WireDatabaseBackup') || class_exists('WireDatabaseBackup')) && file_exists(wire('config')->paths->assets.'moduletoolkitbackups/')) { // not present in older version of PW - prior to Aug 19, 2014 (approx 2.4.13)
+        if((class_exists('\ProcessWire\WireDatabaseBackup') || class_exists('WireDatabaseBackup')) && file_exists($this->wire('config')->paths->assets.'moduletoolkitbackups/')) { // not present in older version of PW - prior to Aug 19, 2014 (approx 2.4.13)
             $f->addOption('restore', 'Restore');
         }
         if($this->session->type) $f->attr('value', $this->session->type);
@@ -255,7 +251,7 @@ class ProcessModuleToolkit extends Process implements Module {
         $form->processInput($this->input->post);
         if(count($form->getErrors())) return false;
 
-        $this->recursiveDelete($this->page->filesManager()->path(), false); //cleanup anything left in the Toolkit assets/files directory from previous failed install
+        $this->recursiveDelete($this->wire('page')->filesManager()->path(), false); //cleanup anything left in the Toolkit assets/files directory from previous failed install
 
         $type = $form->get('type')->value;
 
@@ -277,17 +273,17 @@ class ProcessModuleToolkit extends Process implements Module {
      */
     protected function buildExportForm2() {
 
-        $this->recursiveDelete($this->page->filesManager()->path(), false); //cleanup anything left in the Toolkit assets/files directory from previous failed install
+        $this->recursiveDelete($this->wire('page')->filesManager()->path(), false); //cleanup anything left in the Toolkit assets/files directory from previous failed install
 
-        if(method_exists($this->modules, 'resetCache')) {
-            $this->modules->resetCache();
+        if(method_exists($this->wire('modules'), 'resetCache')) {
+            $this->wire('modules')->resetCache();
         }
 
-        $form = $this->modules->get("InputfieldForm");
+        $form = $this->wire('modules')->get("InputfieldForm");
         $form->method = 'post';
         $form->description = "Choose Modules to Export";
 
-        $f = $this->modules->get("InputfieldSelect");
+        $f = $this->wire('modules')->get("InputfieldSelect");
         $f->name = 'save_or_copy';
         $f->label = 'Output Format';
         $f->description = "Save zip file to your computer or display a Text list or JSON code so you can copy and then paste into new site.\nThe \"Copy\" options will not work for migrating modules that are not in the ProcessWire modules directory.";
@@ -299,7 +295,7 @@ class ProcessModuleToolkit extends Process implements Module {
         if($this->session->save_or_copy) $f->attr('value', $this->session->save_or_copy);
         $form->add($f);
 
-        $f = $this->modules->get("InputfieldCheckboxes");
+        $f = $this->wire('modules')->get("InputfieldCheckboxes");
         $f->name = 'selectedModules';
         $f->label = 'Selected Modules';
         $f->required = true;
@@ -309,18 +305,18 @@ class ProcessModuleToolkit extends Process implements Module {
 
         $parentModules = array();
 
-        foreach($this->modules as $module) {
+        foreach($this->wire('modules') as $module) {
 
-            $moduleInfo = wire('modules')->getModuleInfoVerbose($module->className());
+            $moduleInfo = $this->wire('modules')->getModuleInfoVerbose($module->className());
             // don't show core modules
             //if($moduleInfo['core']) continue; //exclude core modules - this wasn't working. It seems that some modules don't have a "name", hence the use of className below.
-            $filename = $this->config->urls->{$module->className()};
-            //if(preg_match('%^\/wire\/%Uis', $filename) || !wire('modules')->isInstalled($module)) continue;
+            $filename = $this->wire('config')->urls->{$module->className()};
+            //if(preg_match('%^\/wire\/%Uis', $filename) || !$this->wire('modules')->isInstalled($module)) continue;
 
             $moduleName = $module->className();
 
-            $dependents = $this->modules->getRequiredBy($moduleName, true);
-            $requirements = $this->modules->getRequires($moduleName, false, true);
+            $dependents = $this->wire('modules')->getRequiredBy($moduleName, true);
+            $requirements = $this->wire('modules')->getRequires($moduleName, false, true);
             $installs = $moduleInfo['installs'];
             $dependentsStr = '';
             $requirementsStr = '';
@@ -334,11 +330,11 @@ class ProcessModuleToolkit extends Process implements Module {
                 if($name == 'PHP' || $name == 'ProcessWire') {
                     //don't want to show these requirements
                 } else {
-                    //echo dirname($this->config->urls->$requirementsStr);
-                    //echo $name . ':' . basename($filename) . ':'. basename($this->config->urls->$name) . '<br />';
+                    //echo dirname($this->wire('config')->urls->$requirementsStr);
+                    //echo $name . ':' . basename($filename) . ':'. basename($this->wire('config')->urls->$name) . '<br />';
                     //if folder of required module matches the module, then don't display in list
-                    //if(basename($this->config->urls->$name) == basename($filename)) continue 2;
-                    if(basename($this->config->urls->$name) == basename($filename)) $parentModules[basename($filename)]['settingsOnly'] = 1;
+                    //if(basename($this->wire('config')->urls->$name) == basename($filename)) continue 2;
+                    if(basename($this->wire('config')->urls->$name) == basename($filename)) $parentModules[basename($filename)]['settingsOnly'] = 1;
                     $requirementsStr .= ($requirementsStr ? ', ' : '') . "$name$extra";
                 }
             }
@@ -347,14 +343,14 @@ class ProcessModuleToolkit extends Process implements Module {
             $parentModules[$moduleName]['dependents'] = $dependentsStr;
             $parentModules[$moduleName]['requirements'] = $requirementsStr;
             $parentModules[$moduleName]['installs'] = $installsStr;
-            $parentModules[$moduleName]['info'] = wire('modules')->getModuleInfoVerbose($module->className());
+            $parentModules[$moduleName]['info'] = $this->wire('modules')->getModuleInfoVerbose($module->className());
             $parentModules[$moduleName]['settingsOnly'] = 0;
         }
 
         $finalModulesList = $parentModules;
 
         foreach($parentModules as $m) {
-            $moduleInfo = wire('modules')->getModuleInfoVerbose($m['name']);
+            $moduleInfo = $this->wire('modules')->getModuleInfoVerbose($m['name']);
             $installs = $moduleInfo['installs'];
             foreach($installs as $name) {
                 $installsStr .= ($installsStr ? ', ' : '') . $name;
@@ -397,16 +393,16 @@ class ProcessModuleToolkit extends Process implements Module {
             return '<p><textarea rows="10" style="width:95%">' . $this->modulesToJSON($this->session->selectedModules, false) . '</textarea></p><p>Copy this text and use the Install > Paste option to install and configure these modules.</p><p><a href="../export/">Export more modules</a></p>';
         }
         else{
-            $this->session->jsonFilename = $this->page->filesManager()->path() . 'data.json';
+            $this->session->jsonFilename = $this->wire('page')->filesManager()->path() . 'data.json';
 
             //write json file to assets folder and add it to the zip download
             file_put_contents($this->session->jsonFilename, $this->modulesToJSON($this->session->selectedModules, true));
             $allfiles = array($this->session->jsonFilename);
-            $this->create_zip($allfiles, $this->page->filesManager()->path().'modules.zip', 'json');
+            $this->create_zip($allfiles, $this->wire('page')->filesManager()->path().'modules.zip', 'json');
             unlink($this->session->jsonFilename);
 
             //download the zip to the users
-            $zipFilename = $this->page->filesManager()->path().'modules.zip';
+            $zipFilename = $this->wire('page')->filesManager()->path().'modules.zip';
             if (file_exists($zipFilename)) {
                 header('Content-Description: File Transfer');
                 header('Content-Type: application/zip');
@@ -430,19 +426,19 @@ class ProcessModuleToolkit extends Process implements Module {
     protected function buildInstallForm2() {
 
         if(!$this->input->post->submit) {
-            $this->recursiveDelete($this->page->filesManager()->path(), false); //cleanup anything left in the Toolkit assets/files directory from previous failed install
+            $this->recursiveDelete($this->wire('page')->filesManager()->path(), false); //cleanup anything left in the Toolkit assets/files directory from previous failed install
         }
 
-        if(method_exists($this->modules, 'resetCache')) {
-            $this->modules->resetCache();
+        if(method_exists($this->wire('modules'), 'resetCache')) {
+            $this->wire('modules')->resetCache();
         }
 
-        $form = $this->modules->get("InputfieldForm");
+        $form = $this->wire('modules')->get("InputfieldForm");
         $form->method = 'post';
         $form->description = "Install";
 
         if(class_exists('\ProcessWire\WireDatabaseBackup') || class_exists('WireDatabaseBackup')) { //not present in older version of PW - prior to Aug 19, 2014 (approx 2.4.13)
-            $f = $this->modules->get("InputfieldCheckbox");
+            $f = $this->wire('modules')->get("InputfieldCheckbox");
             $f->name = 'create_backup';
             $f->label = 'Backup existing database and modules directory';
             $f->description = "Determines whether to backup the existing database and modules directory before installing the new content.";
@@ -451,7 +447,7 @@ class ProcessModuleToolkit extends Process implements Module {
             $form->add($f);
         }
 
-        $f = $this->modules->get("InputfieldTextarea");
+        $f = $this->wire('modules')->get("InputfieldTextarea");
         $f->name = 'modulesList';
         $f->label = 'Text List of Modules to Install';
         $f->description = "Enter one module class name (or URL to zip) per line.";
@@ -459,7 +455,7 @@ class ProcessModuleToolkit extends Process implements Module {
         $f->collapsed = Inputfield::collapsedBlank;
         $form->add($f);
 
-        $f = $this->modules->get("InputfieldTextarea");
+        $f = $this->wire('modules')->get("InputfieldTextarea");
         $f->name = 'json_data';
         $f->label = 'JSON of Modules to Install and Configure';
         $f->description = "Paste in JSON content exported from another site using this module.";
@@ -467,7 +463,7 @@ class ProcessModuleToolkit extends Process implements Module {
         $f->collapsed = Inputfield::collapsedBlank;
         $form->add($f);
 
-        $f = $this->modules->get("InputfieldFile");
+        $f = $this->wire('modules')->get("InputfieldFile");
         $f->name = 'zip_file';
         $f->label = 'Zip File Upload';
         $f->extensions = 'zip';
@@ -478,7 +474,7 @@ class ProcessModuleToolkit extends Process implements Module {
         $f->collapsed = Inputfield::collapsedBlank;
         $form->add($f);
 
-        $f = $this->modules->get("InputfieldCheckbox");
+        $f = $this->wire('modules')->get("InputfieldCheckbox");
         $f->name = 'module_settings';
         $f->label = 'Install Module Settings';
         $f->showIf = "zip_file|json_data!=''";
@@ -487,7 +483,7 @@ class ProcessModuleToolkit extends Process implements Module {
         $f->attr('checked', $this->session->module_settings == '1' ? 'checked' : '' );
         $form->add($f);
 
-        /*$f = $this->modules->get("InputfieldCheckbox");
+        /*$f = $this->wire('modules')->get("InputfieldCheckbox");
         $f->name = 'live_upgrade';
         $f->label = 'Live Upgrade Modules';
         $f->showIf = "zip_file!=''";
@@ -509,21 +505,21 @@ class ProcessModuleToolkit extends Process implements Module {
      */
     protected function buildRestoreForm2() {
 
-        $this->recursiveDelete($this->page->filesManager()->path(), false); //cleanup anything left in the Toolkit assets/files directory from previous failed install
+        $this->recursiveDelete($this->wire('page')->filesManager()->path(), false); //cleanup anything left in the Toolkit assets/files directory from previous failed install
 
-        if(method_exists($this->modules, 'resetCache')) {
-            $this->modules->resetCache();
+        if(method_exists($this->wire('modules'), 'resetCache')) {
+            $this->wire('modules')->resetCache();
         }
 
-        $form = $this->modules->get("InputfieldForm");
+        $form = $this->wire('modules')->get("InputfieldForm");
         $form->method = 'post';
         $form->description = "Restore";
 
-        $f = $this->modules->get("InputfieldSelect");
+        $f = $this->wire('modules')->get("InputfieldSelect");
         $f->name = 'restore_directory';
         $f->label = 'Backup to Restore';
         $f->required = true;
-        foreach($iterator = new RecursiveDirectoryIterator($this->config->paths->assets.'moduletoolkitbackups/', RecursiveDirectoryIterator::SKIP_DOTS) as $item) {
+        foreach($iterator = new RecursiveDirectoryIterator($this->wire('config')->paths->assets.'moduletoolkitbackups/', RecursiveDirectoryIterator::SKIP_DOTS) as $item) {
             if ($item->isDir()) {
 
                 if(strpos($iterator->getSubPathName(),'_') !== false) {
@@ -555,12 +551,12 @@ class ProcessModuleToolkit extends Process implements Module {
      */
     protected function buildInstallForm3($data) {
 
-        $form = $this->modules->get("InputfieldForm");
+        $form = $this->wire('modules')->get("InputfieldForm");
         $form->method = 'post';
         $form->description = "Edit Modules to be Installed";
 
 
-        $f = $this->modules->get("InputfieldCheckboxes");
+        $f = $this->wire('modules')->get("InputfieldCheckboxes");
         $f->name = 'installModules';
         $f->label = 'Install Modules';
         $f->required = true;
@@ -577,22 +573,22 @@ class ProcessModuleToolkit extends Process implements Module {
 
 
         //these hidden fields are a bit of a hack to prevent field required notices when processing this form because we are using the same code to process Input Form2 and Form3 and session variables are being lost somewhere
-        $f = $this->modules->get("InputfieldHidden");
+        $f = $this->wire('modules')->get("InputfieldHidden");
         $f->name = 'create_backup';
         if($this->session->create_backup) $f->attr('value', $this->session->create_backup);
         $form->add($f);
 
-        $f = $this->modules->get("InputfieldHidden");
+        $f = $this->wire('modules')->get("InputfieldHidden");
         $f->name = 'module_settings';
         if($this->session->module_settings) $f->attr('value', $this->session->module_settings);
         $form->add($f);
 
-        $f = $this->modules->get("InputfieldHidden");
+        $f = $this->wire('modules')->get("InputfieldHidden");
         $f->name = 'json_data';
         if($this->session->jsonData) $f->attr('value', $this->session->jsonData);
         $form->add($f);
 
-        /*$f = $this->modules->get("InputfieldHidden");
+        /*$f = $this->wire('modules')->get("InputfieldHidden");
         $f->name = 'live_upgrade';
         if($this->session->live_upgrade) $f->attr('value', $this->session->live_upgrade);
         $form->add($f);*/
@@ -634,13 +630,13 @@ class ProcessModuleToolkit extends Process implements Module {
 
             foreach(explode("\n", $this->input->post->modulesList) as $moduleName) {
                 $moduleName = trim($moduleName);
-                if(!wire('modules')->isInstalled($moduleName)) {
-                    $info = $this->modules->getModuleInfoVerbose($moduleName);
+                if(!$this->wire('modules')->isInstalled($moduleName)) {
+                    $info = $this->wire('modules')->getModuleInfoVerbose($moduleName);
                     $requires = array();
-                    if(count($info['requires'])) $requires = $this->modules->getRequiresForInstall($moduleName);
+                    if(count($info['requires'])) $requires = $this->wire('modules')->getRequiresForInstall($moduleName);
                     if(!count($requires)) {
-                        $this->modules->getInstall($moduleName);
-                        if(!wire('modules')->isInstalled($moduleName)) {
+                        $this->wire('modules')->getInstall($moduleName);
+                        if(!$this->wire('modules')->isInstalled($moduleName)) {
                             $this->downloadAndInstall($moduleName, true);
                         }
                         $this->installedModuleClassNames[] = $moduleName;
@@ -656,7 +652,7 @@ class ProcessModuleToolkit extends Process implements Module {
             $newModules = array_diff($this->getInstallableModules(), $installableModules);
 
             foreach($newModules as $m) {
-                if($this->modules->get($m)) {
+                if($this->wire('modules')->get($m)) {
                     $this->installedModuleClassNames[] = $m;
                 }
                 else {
@@ -664,7 +660,7 @@ class ProcessModuleToolkit extends Process implements Module {
                 }
             }
 
-            if(method_exists($this->modules, 'resetCache')) $this->modules->resetCache();
+            if(method_exists($this->wire('modules'), 'resetCache')) $this->wire('modules')->resetCache();
 
             return $this->processInstallForm2Markup();
         }
@@ -678,7 +674,7 @@ class ProcessModuleToolkit extends Process implements Module {
                 $this->session->zipFilename = $this->session->zipFile->filename;
             }
 
-            $this->session->toolkitFilesDir = $this->page->filesManager()->path() . 'toolkitfiles';
+            $this->session->toolkitFilesDir = $this->wire('page')->filesManager()->path() . 'toolkitfiles';
             $this->session->jsonFilename = $this->session->toolkitFilesDir . '/data.json';
             if($form->get('json_data')->value != '') {
                 $this->session->jsonData = $form->get('json_data')->value;
@@ -698,7 +694,7 @@ class ProcessModuleToolkit extends Process implements Module {
 
                     // set paths for moving files into the destination PW site's modules folder
                     $srcDir = $this->session->toolkitFilesDir;
-                    $destDir = $this->config->paths->siteModules.'/';
+                    $destDir = $this->wire('config')->paths->siteModules.'/';
 
                     // check write permissions on modules directory and fail with friendly error
                     if(file_exists($srcDir) && !is_writable($destDir)) {
@@ -715,7 +711,7 @@ class ProcessModuleToolkit extends Process implements Module {
                             if(pathinfo($item, PATHINFO_BASENAME) == 'data.json') continue;
                             $modulePath = str_replace($this->session->toolkitFilesDir . '/', '', $item);
                             $moduleName = strpos($modulePath,'/') !== false ? strstr($modulePath, '/', true) : $modulePath;
-                            if(wire('modules')->isInstalled($moduleName)) continue; //if already installed then skip
+                            if($this->wire('modules')->isInstalled($moduleName)) continue; //if already installed then skip
                             if(!empty($this->session->installModules) && !in_array($moduleName, $this->session->installModules)) continue; //if not in the list of selected modules to be installed then skip
                             if ($item->isDir()) {
                                 if(!file_exists($destDir . $iterator->getSubPathName())) {
@@ -781,19 +777,19 @@ class ProcessModuleToolkit extends Process implements Module {
         foreach($data->modules as $modules) {
             foreach($modules as $moduleName => $data_details) {
                 if(!in_array($moduleName, $this->session->installModules)) continue; //if not in the list of selected modules to be installed then skip
-                //$this->modules->get($moduleName);
-                if(!wire('modules')->isInstalled($moduleName)) {
-                    $info = $this->modules->getModuleInfoVerbose($moduleName);
+                //$this->wire('modules')->get($moduleName);
+                if(!$this->wire('modules')->isInstalled($moduleName)) {
+                    $info = $this->wire('modules')->getModuleInfoVerbose($moduleName);
                     //if(count($info['requires'])==0) {
-                        //$requires = $this->modules->getRequiresForInstall($moduleName); don't know why this and also isInstallable($moduleName, true) wasn't working
+                        //$requires = $this->wire('modules')->getRequiresForInstall($moduleName); don't know why this and also isInstallable($moduleName, true) wasn't working
                         //if(count($requires)) continue;
-                        $this->modules->getInstall($moduleName);
+                        $this->wire('modules')->getInstall($moduleName);
                         if($this->session->jsonData) {
-                            if(!wire('modules')->isInstalled($moduleName)) {
+                            if(!$this->wire('modules')->isInstalled($moduleName)) {
                                 $this->downloadAndInstall($moduleName, true); // if only json need to download and install before saving config settings
                             }
                         }
-                        if($this->session->module_settings == 1) $this->modules->saveModuleConfigData($moduleName, $this->objectToArray($data_details));
+                        if($this->session->module_settings == 1) $this->wire('modules')->saveModuleConfigData($moduleName, $this->objectToArray($data_details));
                         //if(!$this->session->jsonData && $this->session->live_upgrade == 1) $this->downloadAndInstall($moduleName, true);
                     //}
                     $this->installedModuleClassNames[] = $moduleName;
@@ -801,8 +797,8 @@ class ProcessModuleToolkit extends Process implements Module {
             }
         }
 
-        if(method_exists($this->modules, 'resetCache')) {
-            $this->modules->resetCache();
+        if(method_exists($this->wire('modules'), 'resetCache')) {
+            $this->wire('modules')->resetCache();
         }
 
 
@@ -833,14 +829,14 @@ class ProcessModuleToolkit extends Process implements Module {
             $this->createBackup();
         }
 
-        foreach($this->modules as $module) {
+        foreach($this->wire('modules') as $module) {
             if(is_array($this->session->upgrade_modules) && !in_array($module->className(), $this->session->upgrade_modules)) continue; //if not in the list of selected modules to be installed then skip
             $this->downloadAndInstall($module->className(), true);
             $this->upgradedModuleClassNames[] = $module->className();
         }
 
-        if(method_exists($this->modules, 'resetCache')) {
-            $this->modules->resetCache();
+        if(method_exists($this->wire('modules'), 'resetCache')) {
+            $this->wire('modules')->resetCache();
         }
 
         return $this->processUpgradeForm2Markup();
@@ -904,24 +900,24 @@ class ProcessModuleToolkit extends Process implements Module {
      */
     protected function processRestoreForm2(InputfieldForm $form) {
 
-        $backup = new WireDatabaseBackup($this->config->paths->assets.'moduletoolkitbackups/' . $this->input->post->restore_directory . '/');
+        $backup = new WireDatabaseBackup($this->wire('config')->paths->assets.'moduletoolkitbackups/' . $this->input->post->restore_directory . '/');
         $backup->setDatabase($this->database);
-        $backup->setDatabaseConfig($this->config);
+        $backup->setDatabaseConfig($this->wire('config'));
 
-        $success = $backup->restore($this->config->paths->assets.'moduletoolkitbackups/' . $this->input->post->restore_directory . '/moduletoolkitbackup.sql');
+        $success = $backup->restore($this->wire('config')->paths->assets.'moduletoolkitbackups/' . $this->input->post->restore_directory . '/moduletoolkitbackup.sql');
         if($success) $this->message("Database successfully restored.");
         else $this->error("Sorry, there was a problem and the database could not be restored.");
 
-        $this->recursiveDelete($this->config->paths->siteModules, false); //clean up modules folder so it will only contain those files from the backup
+        $this->recursiveDelete($this->wire('config')->paths->siteModules, false); //clean up modules folder so it will only contain those files from the backup
 
-        if(wireCopy($this->config->paths->assets.'moduletoolkitbackups/' . $this->input->post->restore_directory . '/', $this->config->paths->siteModules, true)) {
+        if(wireCopy($this->wire('config')->paths->assets.'moduletoolkitbackups/' . $this->input->post->restore_directory . '/', $this->wire('config')->paths->siteModules, true)) {
             $this->message("Modules directory successfully restored.");
         }
         else{
             $this->error("Sorry, there was a problem and the modules directory could not be restored.");
         }
 
-        unlink($this->config->paths->siteModules . 'moduletoolkitbackup.sql');
+        unlink($this->wire('config')->paths->siteModules . 'moduletoolkitbackup.sql');
 
     }
 
@@ -933,18 +929,18 @@ class ProcessModuleToolkit extends Process implements Module {
      */
     protected function buildUpgradeForm2() {
 
-        $this->recursiveDelete($this->page->filesManager()->path(), false); //cleanup anything left in the Toolkit assets/files directory from previous failed install
+        $this->recursiveDelete($this->wire('page')->filesManager()->path(), false); //cleanup anything left in the Toolkit assets/files directory from previous failed install
 
-        if(method_exists($this->modules, 'resetCache')) {
-            $this->modules->resetCache();
+        if(method_exists($this->wire('modules'), 'resetCache')) {
+            $this->wire('modules')->resetCache();
         }
 
-        $form = $this->modules->get("InputfieldForm");
+        $form = $this->wire('modules')->get("InputfieldForm");
         $form->method = 'post';
         $form->description = "Upgrade";
 
         if(class_exists('\ProcessWire\WireDatabaseBackup') || class_exists('WireDatabaseBackup')) { //not present in older version of PW - prior to Aug 19, 2014 (approx 2.4.13)
-            $f = $this->modules->get("InputfieldCheckbox");
+            $f = $this->wire('modules')->get("InputfieldCheckbox");
             $f->name = 'create_backup';
             $f->label = 'Backup existing database and modules directory';
             $f->description = "Determines whether to backup the existing database and modules directory before installing the new content. Highly Recommended!";
@@ -953,7 +949,7 @@ class ProcessModuleToolkit extends Process implements Module {
             $form->add($f);
         }
 
-        $f = $this->modules->get("InputfieldCheckboxes");
+        $f = $this->wire('modules')->get("InputfieldCheckboxes");
         $f->name = 'upgrade_modules';
         $f->label = 'Upgrade Modules';
 
@@ -994,17 +990,17 @@ class ProcessModuleToolkit extends Process implements Module {
      */
     protected function buildCleanupForm2() {
 
-        $this->recursiveDelete($this->page->filesManager()->path(), false); //cleanup anything left in the Toolkit assets/files directory from previous failed install
+        $this->recursiveDelete($this->wire('page')->filesManager()->path(), false); //cleanup anything left in the Toolkit assets/files directory from previous failed install
 
-        if(method_exists($this->modules, 'resetCache')) {
-            $this->modules->resetCache();
+        if(method_exists($this->wire('modules'), 'resetCache')) {
+            $this->wire('modules')->resetCache();
         }
 
-        $form = $this->modules->get("InputfieldForm");
+        $form = $this->wire('modules')->get("InputfieldForm");
         $form->method = 'post';
         $form->description = "Upgrade Cleanup";
 
-        $f = $this->modules->get("InputfieldCheckboxes");
+        $f = $this->wire('modules')->get("InputfieldCheckboxes");
         $f->name = 'upgradeCleanup';
         $f->label = 'Upgrade Cleanup';
 
@@ -1012,7 +1008,7 @@ class ProcessModuleToolkit extends Process implements Module {
 
         $i=0;
         //site modules
-        foreach($iterator = new DirectoryIterator($this->config->paths->siteModules) as $item) {
+        foreach($iterator = new DirectoryIterator($this->wire('config')->paths->siteModules) as $item) {
             if($item->isDot() || !$item->isDir()) continue;
             if(substr($item->getFilename(), 0, 1) !== '.') continue;
             $f->addOption($item->getPathname(), $item->getFilename());
@@ -1021,7 +1017,7 @@ class ProcessModuleToolkit extends Process implements Module {
         }
 
         //PW core
-        foreach($iterator = new DirectoryIterator($this->config->paths->root) as $item) {
+        foreach($iterator = new DirectoryIterator($this->wire('config')->paths->root) as $item) {
             // skip the . and .. directories
             if($item->isDot()) continue;
 
@@ -1041,6 +1037,7 @@ class ProcessModuleToolkit extends Process implements Module {
         }
         else {
             $f->description = "There are no items that have backups that can be deleted.";
+            $f->removeOption('toggleAll');
         }
 
         $form->add($f);
@@ -1066,9 +1063,9 @@ class ProcessModuleToolkit extends Process implements Module {
             if(!in_array($item, $modules_array)) {
                 $a['modules'][] = $this->pageToArray($item);
                 $modules_array[] = $item;
-                $moduleInfo = wire('modules')->getModuleInfoVerbose($item);
+                $moduleInfo = $this->wire('modules')->getModuleInfoVerbose($item);
 
-                $modulePath = str_replace($this->config->paths->siteModules, '', $moduleInfo['file']);
+                $modulePath = str_replace($this->wire('config')->paths->siteModules, '', $moduleInfo['file']);
                 $moduleRoot = strpos($modulePath,'/') !== false ? strstr($modulePath, '/', true) : $moduleInfo['file'];
 
                 $this->moduleFiles[] = $moduleRoot;
@@ -1083,8 +1080,8 @@ class ProcessModuleToolkit extends Process implements Module {
             $allfiles = array();
             $i=0;
             foreach($this->moduleFiles as $modulepath) {
-                if(is_dir($this->config->paths->siteModules . $modulepath)) {
-                    $dir = new DirectoryIterator($this->config->paths->siteModules . $modulepath);
+                if(is_dir($this->wire('config')->paths->siteModules . $modulepath)) {
+                    $dir = new DirectoryIterator($this->wire('config')->paths->siteModules . $modulepath);
                     foreach($dir as $file) {
                         if($file->isDir() || $file->isDot()) continue;
                         $allfiles[$i]['newpath'] = $modulepath . '/' . $file->getBasename();
@@ -1099,7 +1096,7 @@ class ProcessModuleToolkit extends Process implements Module {
                 }
             }
 
-            $this->create_zip($allfiles, $this->page->filesManager()->path().'modules.zip', 'files');
+            $this->create_zip($allfiles, $this->wire('page')->filesManager()->path().'modules.zip', 'files');
 
         }
 
@@ -1113,7 +1110,7 @@ class ProcessModuleToolkit extends Process implements Module {
      *
      */
     protected function pageToArray($module) {
-        $data[$module] = wire('modules')->getModuleConfigData($module);
+        $data[$module] = $this->wire('modules')->getModuleConfigData($module);
         return $data;
     }
 
@@ -1144,7 +1141,7 @@ class ProcessModuleToolkit extends Process implements Module {
         if(count($this->installedModuleClassNames)>0) {
             $out .= "<p><strong>The following modules were successfully installed:</strong></p><p>";
             foreach(array_unique($this->installedModuleClassNames) as $moduleClassName) {
-                $out .= '<a href="'.$this->config->urls->admin.'module/edit?name='.$moduleClassName.'">' . $moduleClassName .'</a><br />';
+                $out .= '<a href="'.$this->wire('config')->urls->admin.'module/edit?name='.$moduleClassName.'">' . $moduleClassName .'</a><br />';
             }
         }
         else {
@@ -1173,7 +1170,7 @@ class ProcessModuleToolkit extends Process implements Module {
         if(count($this->upgradedModuleClassNames)>0) {
             $out .= "<p><strong>The following modules were successfullly upgraded:</strong></p><p>";
             foreach(array_unique($this->upgradedModuleClassNames) as $moduleClassName) {
-                $out .= '<a href="'.$this->config->urls->admin.'module/edit?name='.$moduleClassName.'">' . $moduleClassName .'</a><br />';
+                $out .= '<a href="'.$this->wire('config')->urls->admin.'module/edit?name='.$moduleClassName.'">' . $moduleClassName .'</a><br />';
             }
             $out .= "<p>NB You may need to refresh your modules page to see the updated versions.</p>";
         }
@@ -1208,7 +1205,7 @@ class ProcessModuleToolkit extends Process implements Module {
      *
      */
     protected function addSubmit(InputfieldForm $form, $value = 'Submit') {
-        $f = $this->modules->get("InputfieldSubmit");
+        $f = $this->wire('modules')->get("InputfieldSubmit");
         $f->name = 'submit';
         $f->value = $value;
         $form->add($f);
@@ -1277,7 +1274,7 @@ class ProcessModuleToolkit extends Process implements Module {
 
     public function downloadAndInstall($name, $upgrade = false) {
 
-        require_once(wire('config')->paths->modules . 'Process/ProcessModule/ProcessModuleInstall.php');
+        require_once($this->wire('config')->paths->modules . 'Process/ProcessModule/ProcessModuleInstall.php');
         if(class_exists('\ProcessWire\ProcessModuleInstall')) {
             $install = new \ProcessWire\ProcessModuleInstall();
         }
@@ -1320,15 +1317,15 @@ class ProcessModuleToolkit extends Process implements Module {
                 }
                 if(!$installable) return;
 
-                $installed = wire('modules')->isInstalled($className) ? $this->modules->getModuleInfoVerbose($className) : null;
-                $installedVersion = $this->modules->formatVersion($installed['version']);
+                $installed = $this->wire('modules')->isInstalled($className) ? $this->wire('modules')->getModuleInfoVerbose($className) : null;
+                $installedVersion = $this->wire('modules')->formatVersion($installed['version']);
                 if(version_compare($installedVersion, $data['module_version']) < 0) {
 
                     $destinationDir = $this->wire('config')->paths->siteModules . $className . '/';
                     $completedDir = $install->downloadModule($data['download_url'], $destinationDir);
 
                     //install the module
-                    $this->modules->get($className);
+                    $this->wire('modules')->get($className);
 
                     if($completedDir) {
                         $this->installedModuleClassNames[] = $className;
@@ -1354,7 +1351,7 @@ class ProcessModuleToolkit extends Process implements Module {
     // simplified version of the one in ProcessWireUpgradeCheck module - omits checks for core upgrades
     public function getVersions() {
         $versions = array();
-        if($this->config->moduleServiceKey) {
+        if($this->wire('config')->moduleServiceKey) {
             foreach($this->getModuleVersions(false) as $name => $info) {
                 $versions[$name] = $info;
             }
@@ -1390,10 +1387,10 @@ class ProcessModuleToolkit extends Process implements Module {
      */
     public function getModuleVersions($onlyNew = false) {
 
-        if(!$this->config->moduleServiceKey) throw new WireException("This feature requires ProcessWire 2.4.19+");
+        if(!$this->wire('config')->moduleServiceKey) throw new WireException("This feature requires ProcessWire 2.4.19+");
 
-        $url =  $this->config->moduleServiceURL .
-            "?apikey=" . $this->config->moduleServiceKey .
+        $url =  $this->wire('config')->moduleServiceURL .
+            "?apikey=" . $this->wire('config')->moduleServiceKey .
             "&limit=100" .
             "&field=module_version,version,requires_versions" .
             "&class_name=";
@@ -1401,14 +1398,14 @@ class ProcessModuleToolkit extends Process implements Module {
         $names = array();
         $versions = array();
 
-        foreach($this->modules as $module) {
+        foreach($this->wire('modules') as $module) {
             $name = $module->className();
-            $info = $this->modules->getModuleInfoVerbose($name);
+            $info = $this->wire('modules')->getModuleInfoVerbose($name);
             if($info['core']) continue;
             $names[] = $name;
             $versions[$name] = array(
                 'title' => $info['title'],
-                'local' => $this->modules->formatVersion($info['version']),
+                'local' => $this->wire('modules')->formatVersion($info['version']),
                 'remote' => false,
                 'new' => 0,
                 'requiresVersions' => $info['requiresVersions']
@@ -1464,18 +1461,18 @@ class ProcessModuleToolkit extends Process implements Module {
 
     public function createBackup() {
 
-        $backupDir = $this->config->paths->assets.'moduletoolkitbackups/'.date('Y-m-d_H-i-s');
+        $backupDir = $this->wire('config')->paths->assets.'moduletoolkitbackups/'.date('Y-m-d_H-i-s');
 
-        if (!file_exists($this->config->paths->assets.'moduletoolkitbackups/')) mkdir($this->config->paths->assets.'moduletoolkitbackups/');
+        if (!file_exists($this->wire('config')->paths->assets.'moduletoolkitbackups/')) mkdir($this->wire('config')->paths->assets.'moduletoolkitbackups/');
         if (!file_exists($backupDir)) mkdir($backupDir);
 
         $backup = new WireDatabaseBackup($backupDir.'/');
         $backup->setDatabase($this->database);
-        $backup->setDatabaseConfig($this->config);
+        $backup->setDatabaseConfig($this->wire('config'));
 
         $file = $backup->backup(array('filename' => 'moduletoolkitbackup.sql'));
 
-        wireCopy($this->config->paths->siteModules, $backupDir . '/', true);
+        wireCopy($this->wire('config')->paths->siteModules, $backupDir . '/', true);
     }
 
 
